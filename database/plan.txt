@@ -1,0 +1,57 @@
+*** TABLES ***
+
+TEACHERS TABLE
+-id
+-lastname
+-firstname
+-middlename (nullable)
+-email (nullable)
+-timestamps
+
+GRADE_LEVELS TABLE
+-id
+-grade_level
+-timestamps
+
+SECTIONS TABLE
+-id
+-section_name
+-grade_level (FK)
+-timestamps
+
+ROOMS TABLE
+-id
+-room_name
+-timestamps
+
+SUBJECTS TABLE
+-id
+-subject_name
+-grade_level (FK)
+-timestamps
+
+ROOM_SECTION TABLE
+-id
+-room_id
+-section_id
+-timestamps
+
+SCHEDULE_GROUP
+-id
+-title
+-description
+-timestamps
+
+SCHEDULES TABLE
+-id
+-start_time
+-end_time
+-section_id (room is tied to section)
+-subject_id
+-proctor (FK - teacher)
+-subject_teacher (FK - teacher)
+-timestamps
+
+
+This is an exam scheduling app. The purpose is to schedule and balance the teachers/proctors load during examinations.
+The app should be able to detect/manage conflicts upon creation of schedules. We did not include the day and decided to just put it inside the schedule_group title and description. First rule, teachers should only have maximum of 2 proctorship per day or per scheduling. Rooms are tied up to sections one on one (not necessarily same section name same room name, and will be assigned during setup). Add roles to the user admin and teacher. For now this is it. The app only has 2 public pages without auth, the login and a page to show the current active schedules for teachers to view anything else needs auth. when accessing the root website if not logged in, it will redirect to login otherwise, to the dashboard.
