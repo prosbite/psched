@@ -56,7 +56,7 @@ const destroy = (subject) => {
         <FlashBanner />
 
         <div class="mb-4 flex items-center justify-between">
-            <p class="text-sm text-gray-600">Each subject belongs to a grade level and is taught by qualified teachers.</p>
+            <p class="text-sm text-gray-600">Each subject belongs to a grade level. Assign its teacher per section on the Sections page.</p>
             <PrimaryButton @click="openCreate">Add Subject</PrimaryButton>
         </div>
 
@@ -66,7 +66,7 @@ const destroy = (subject) => {
                     <tr>
                         <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Subject</th>
                         <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Grade Level</th>
-                        <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Teachers</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Assignments</th>
                         <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Actions</th>
                     </tr>
                 </thead>
@@ -74,7 +74,7 @@ const destroy = (subject) => {
                     <tr v-for="subject in subjects" :key="subject.id">
                         <td class="px-4 py-3 text-sm text-gray-900">{{ subject.subject_name }}</td>
                         <td class="px-4 py-3 text-sm text-gray-600">{{ subject.grade_level?.grade_level }}</td>
-                        <td class="px-4 py-3 text-sm text-gray-600">{{ subject.teachers_count }}</td>
+                        <td class="px-4 py-3 text-sm text-gray-600">{{ subject.section_subject_teachers_count }}</td>
                         <td class="whitespace-nowrap px-4 py-3 text-right text-sm">
                             <button class="text-indigo-600 hover:text-indigo-900" @click="openEdit(subject)">Edit</button>
                             <button class="ms-3 text-red-600 hover:text-red-900" @click="destroy(subject)">Delete</button>

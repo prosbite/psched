@@ -4,17 +4,28 @@ namespace App\Services;
 
 use App\Models\ScheduleGroup;
 use App\Models\Section;
+use App\Models\SectionSubjectTeacher;
 use App\Models\Subject;
 use App\Models\Teacher;
 use App\Models\TimePresetSlot;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\DB;
 
 /**
- * Builds a full exam grid for a schedule group and reports anything that
- * could not be placed. The generator is deterministic and greedy: tasks are
- * processed in section order, then subject order, and each is placed in the
- * earliest conflict-free slot using the least-loaded available teachers.
+ * Builds a fixed-timetable, multi-day exam grid for a schedule group.
+ *
+ * The timetable is derived from the group's ordered subject selection per
+ * grade: subjects are chunked into "exams_per_day" periods, so position
+ * `(day - 1) * exams_per_day + period` maps to one subject. Every section
+ * enrolled in a subject of the same grade therefore sits it at the same
+ * day/period, mirroring the school's assessment grid. Enrollment is the
+ * `section_subject_teacher` mapping: a section without a row for a subject is
+ * not sitting it and is skipped. Proctors are chosen greedily from
+ * the least-loaded candidates (cumulative across all days, then lowest id),
+ * respecting the per-day proctor cap and same-day overlap rules. Teachers who
+ * handle two or more distinct subjects in the grid are exempt from proctoring.
+ *
+ * The subject teacher for each (section, subject) pair is fixed by the
+ * section_subject_teacher mapping; only the proctor is chosen by the solver.
  */
 class ScheduleGenerator
 {
@@ -23,15 +34,22 @@ class ScheduleGenerator
     /**
      * Generate a grid for the given schedule group.
      *
+     * @param  array<int, int>|null  $proctorIds  Teachers allowed to proctor; null means all teachers.
      * @return array{placed: array<int, array<string, mixed>>, unplaced: array<int, array<string, mixed>>, warnings: array<int, string>}
      */
-    public function generate(ScheduleGroup $group): array
+    public function generate(ScheduleGroup $group, ?array $proctorIds = null): array
     {
         $group->loadMissing('timePreset.slots');
 
-        $slots = $group->timePreset?->slots?->values() ?? collect();
+        $days = max(1, (int) ($group->days ?? 3));
+        $examsPerDay = max(1, (int) ($group->exams_per_day ?? 3));
+        $maxProctors = (int) ($group->max_proctors_per_teacher ?? 2);
+
         $sections = $group->sections()->with('gradeLevel')->orderBy('sections.id')->get();
-        $subjects = $group->subjects()->orderBy('subjects.id')->get();
+        $subjects = $group->subjects()
+            ->orderBy('schedule_group_subjects.sort_order')
+            ->orderBy('subjects.id')
+            ->get();
 
         $placed = [];
         $unplaced = [];
@@ -46,183 +64,292 @@ class ScheduleGenerator
             }
         }
 
-        $tasks = $this->buildTasks($sections, $subjects);
+        $assignments = $this->subjectTeacherMap($sections, $subjects);
 
-        if ($slots->isEmpty()) {
-            foreach ($tasks as $task) {
-                $unplaced[] = $this->unplacedEntry($task, 'No time preset slots are configured for this schedule group.');
-            }
+        // A teacher who handles two or more distinct subjects in this grid is
+        // exempt from proctoring, so they are removed from the candidate pool.
+        $proctors = array_values(array_diff(
+            $this->proctorCandidates($proctorIds),
+            $this->subjectTeachingExemptions($assignments, $subjects),
+        ));
 
-            return ['placed' => $placed, 'unplaced' => $unplaced, 'warnings' => $warnings];
+        $slots = $group->timePreset?->slots ?? collect();
+        $defaultSlots = $slots->whereNull('grade_level_id')->sortBy('sort_order')->values();
+        $slotsByGrade = $slots->whereNotNull('grade_level_id')
+            ->groupBy(fn (TimePresetSlot $slot): int => (int) $slot->grade_level_id);
+
+        $sectionsByGrade = $sections->groupBy(fn (Section $section): int => (int) $section->grade_level_id);
+        $subjectsByGrade = $subjects->groupBy(fn (Subject $subject): int => (int) $subject->grade_level_id);
+
+        $gradeIds = $sectionsByGrade->keys()
+            ->map(fn ($id): int => (int) $id)
+            ->sort()
+            ->values();
+
+        $effectiveSlotsByGrade = [];
+
+        foreach ($gradeIds as $gradeId) {
+            $gradeSlots = $slotsByGrade->get($gradeId, collect())->sortBy('sort_order')->values();
+
+            $effectiveSlotsByGrade[$gradeId] = $gradeSlots->isNotEmpty() ? $gradeSlots : $defaultSlots;
         }
 
-        $maxProctors = (int) ($group->max_proctors_per_teacher ?? 2);
-        $qualified = $this->qualifiedTeachers();
-        $teacherIds = Teacher::orderBy('id')->pluck('id')->map(fn ($id): int => (int) $id)->all();
+        $proctorTotals = [];
 
-        $teachingLoad = [];
-        $proctorLoad = [];
-        $usedSlots = [];
+        for ($day = 1; $day <= $days; $day++) {
+            foreach ($gradeIds as $gradeId) {
+                $gradeSections = $sectionsByGrade->get($gradeId)->values();
+                $gradeSubjects = $subjectsByGrade->get($gradeId, collect())->values();
+                $effectiveSlots = $effectiveSlotsByGrade[$gradeId];
 
-        foreach ($tasks as $task) {
-            $section = $task['section'];
-            $subject = $task['subject'];
-            $candidates = $qualified[(int) $subject->id] ?? [];
+                for ($period = 0; $period < $examsPerDay; $period++) {
+                    $subject = $gradeSubjects->get((($day - 1) * $examsPerDay) + $period);
 
-            if ($candidates === []) {
-                $unplaced[] = $this->unplacedEntry(
-                    $task,
-                    sprintf('No teacher is qualified to teach "%s".', $subject->subject_name),
-                );
+                    if (! $subject instanceof Subject || $subject->is_elective) {
+                        continue;
+                    }
 
-                continue;
+                    // A section sits a subject only when it has an enrollment
+                    // (section_subject_teacher) row for it. A missing row means
+                    // "not enrolled", so the section is skipped entirely: no
+                    // schedule and no unplaced entry. An enrolled row whose
+                    // teacher was removed (null teacher_id) is a real
+                    // missing_teacher gap and is reported below.
+                    $enrolledSections = $gradeSections
+                        ->filter(fn (Section $section): bool => array_key_exists($this->taskKey($section, $subject), $assignments))
+                        ->values();
+
+                    if ($enrolledSections->isEmpty()) {
+                        continue;
+                    }
+
+                    $slot = $effectiveSlots->get($period);
+
+                    if (! $slot instanceof TimePresetSlot) {
+                        foreach ($enrolledSections as $section) {
+                            $unplaced[] = $this->unplacedEntry(
+                                $day,
+                                $section,
+                                $subject,
+                                'missing_slot',
+                                'No time slot is configured for this period.',
+                                null,
+                            );
+                        }
+
+                        continue;
+                    }
+
+                    foreach ($enrolledSections as $section) {
+                        $subjectTeacherId = $assignments[$this->taskKey($section, $subject)];
+
+                        if ($subjectTeacherId === null) {
+                            $unplaced[] = $this->unplacedEntry(
+                                $day,
+                                $section,
+                                $subject,
+                                'missing_teacher',
+                                sprintf('No teacher is assigned to "%s" for "%s".', $subject->subject_name, $section->section_name),
+                                $slot,
+                            );
+
+                            continue;
+                        }
+
+                        $entry = $this->place(
+                            $group,
+                            $section,
+                            $subject,
+                            $subjectTeacherId,
+                            $day,
+                            $slot,
+                            $proctors,
+                            $placed,
+                            $proctorTotals,
+                            $maxProctors,
+                        );
+
+                        if ($entry === null) {
+                            $unplaced[] = $this->unplacedEntry(
+                                $day,
+                                $section,
+                                $subject,
+                                'no_proctor',
+                                sprintf('No conflict-free proctor is available for "%s" in "%s".', $subject->subject_name, $section->section_name),
+                                $slot,
+                            );
+
+                            continue;
+                        }
+
+                        $placed[] = $entry;
+                        $proctorTotals[(int) $entry['proctor_id']] = ($proctorTotals[(int) $entry['proctor_id']] ?? 0) + 1;
+                    }
+                }
             }
-
-            $assignment = $this->assignTask(
-                $group,
-                $section,
-                $subject,
-                $slots,
-                $candidates,
-                $teacherIds,
-                $placed,
-                $usedSlots,
-                $teachingLoad,
-                $proctorLoad,
-                $maxProctors,
-            );
-
-            if ($assignment === null) {
-                $sectionIsFull = count($usedSlots[(int) $section->id] ?? []) >= $slots->count();
-                $reason = $sectionIsFull
-                    ? 'All available time slots are already used for this section.'
-                    : 'No conflict-free teacher and proctor assignment is available for any remaining time slot.';
-                $unplaced[] = $this->unplacedEntry($task, $reason);
-
-                continue;
-            }
-
-            $placed[] = $assignment;
-            $usedSlots[(int) $section->id][(int) $assignment['slot_id']] = true;
-            $teachingLoad[(int) $assignment['subject_teacher_id']] = ($teachingLoad[(int) $assignment['subject_teacher_id']] ?? 0) + 1;
-            $proctorLoad[(int) $assignment['proctor_id']] = ($proctorLoad[(int) $assignment['proctor_id']] ?? 0) + 1;
         }
 
         return ['placed' => $placed, 'unplaced' => $unplaced, 'warnings' => $warnings];
     }
 
     /**
-     * Attempt to place a single task in the earliest conflict-free slot.
+     * Attempt to place a single exam in its fixed slot using the least-loaded
+     * available proctor, returning null when no proctor can take it.
      *
-     * @param  Collection<int, TimePresetSlot>  $slots
-     * @param  array<int, int>  $candidates
-     * @param  array<int, int>  $teacherIds
+     * @param  array<int, int>  $proctors
      * @param  array<int, array<string, mixed>>  $placed
-     * @param  array<int, array<int, bool>>  $usedSlots
-     * @param  array<int, int>  $teachingLoad
-     * @param  array<int, int>  $proctorLoad
+     * @param  array<int, int>  $proctorTotals
      * @return array<string, mixed>|null
      */
-    private function assignTask(
+    private function place(
         ScheduleGroup $group,
         Section $section,
         Subject $subject,
-        Collection $slots,
-        array $candidates,
-        array $teacherIds,
+        int $subjectTeacherId,
+        int $day,
+        TimePresetSlot $slot,
+        array $proctors,
         array $placed,
-        array $usedSlots,
-        array $teachingLoad,
-        array $proctorLoad,
+        array $proctorTotals,
         int $maxProctors,
     ): ?array {
-        $orderedTeachers = $this->orderByLoad($candidates, $teachingLoad);
-        $orderedProctors = $this->orderByLoad($teacherIds, $proctorLoad);
+        $base = [
+            'schedule_group_id' => (int) $group->id,
+            'day' => $day,
+            'section_id' => (int) $section->id,
+            'subject_id' => (int) $subject->id,
+            'subject_teacher_id' => $subjectTeacherId,
+            'start_time' => $slot->start_time,
+            'end_time' => $slot->end_time,
+        ];
 
-        foreach ($slots as $slot) {
-            if (isset($usedSlots[(int) $section->id][(int) $slot->id])) {
+        // The subject teacher is fixed by the timetable and may legitimately
+        // repeat across sections of a grade at the same time (the grid merges
+        // them), so the proctor check omits that role and only verifies that
+        // the chosen proctor is not already engaged as any entry's teacher.
+        $check = $base;
+        unset($check['subject_teacher_id']);
+
+        foreach ($this->orderByLoad($proctors, $proctorTotals) as $proctorId) {
+            if ($proctorId === $subjectTeacherId) {
                 continue;
             }
 
-            $base = [
-                'schedule_group_id' => (int) $group->id,
-                'section_id' => (int) $section->id,
-                'subject_id' => (int) $subject->id,
-                'start_time' => $slot->start_time,
-                'end_time' => $slot->end_time,
-            ];
+            $candidate = $check + ['proctor_id' => $proctorId];
 
-            foreach ($orderedTeachers as $subjectTeacherId) {
-                foreach ($orderedProctors as $proctorId) {
-                    if ($proctorId === $subjectTeacherId) {
-                        continue;
-                    }
-
-                    $candidate = $base + [
-                        'subject_teacher_id' => $subjectTeacherId,
-                        'proctor_id' => $proctorId,
-                    ];
-
-                    if (! $this->conflicts->isConflictFree($placed, $candidate, $maxProctors)) {
-                        continue;
-                    }
-
-                    return $candidate + ['slot_id' => (int) $slot->id];
-                }
+            if (! $this->conflicts->isConflictFree($placed, $candidate, $maxProctors)) {
+                continue;
             }
+
+            return $base + ['proctor_id' => $proctorId, 'slot_id' => (int) $slot->id];
         }
 
         return null;
     }
 
     /**
-     * Build the list of section/subject pairs that must be scheduled.
+     * Build a "section-subject" => teacher id map from the section-aware assignments.
+     *
+     * The map holds a key for every enrolled pair; a pair whose teacher was
+     * removed carries a null value, so the generator can tell "not enrolled"
+     * (no key) apart from "enrolled but has no teacher" (null value).
      *
      * @param  Collection<int, Section>  $sections
      * @param  Collection<int, Subject>  $subjects
-     * @return array<int, array{section: Section, subject: Subject}>
+     * @return array<string, int|null>
      */
-    private function buildTasks(Collection $sections, Collection $subjects): array
+    private function subjectTeacherMap(Collection $sections, Collection $subjects): array
     {
-        $tasks = [];
+        $sectionIds = $sections->pluck('id')->map(fn ($id): int => (int) $id)->all();
+        $subjectIds = $subjects->pluck('id')->map(fn ($id): int => (int) $id)->all();
 
-        foreach ($sections as $section) {
-            foreach ($subjects as $subject) {
-                if ((int) $subject->grade_level_id === (int) $section->grade_level_id) {
-                    $tasks[] = ['section' => $section, 'subject' => $subject];
-                }
-            }
+        if ($sectionIds === [] || $subjectIds === []) {
+            return [];
         }
 
-        return $tasks;
-    }
-
-    /**
-     * Get the qualified teacher ids for every subject, keyed by subject id.
-     *
-     * @return array<int, array<int, int>>
-     */
-    private function qualifiedTeachers(): array
-    {
         $map = [];
 
-        $rows = DB::table('teacher_subject')->select('subject_id', 'teacher_id')->get();
+        $rows = SectionSubjectTeacher::query()
+            ->whereIn('section_id', $sectionIds)
+            ->whereIn('subject_id', $subjectIds)
+            ->get(['section_id', 'subject_id', 'teacher_id']);
 
         foreach ($rows as $row) {
-            $map[(int) $row->subject_id][] = (int) $row->teacher_id;
-        }
-
-        foreach ($map as $subjectId => $ids) {
-            $ids = array_values(array_unique($ids));
-            sort($ids);
-            $map[$subjectId] = $ids;
+            $map[((int) $row->section_id).'-'.((int) $row->subject_id)] = $row->teacher_id === null
+                ? null
+                : (int) $row->teacher_id;
         }
 
         return $map;
     }
 
     /**
-     * Order teacher ids by current load, then by lowest id.
+     * Teacher ids that handle two or more distinct scheduled subjects.
+     *
+     * Elective subjects produce no schedule rows, so enrollment rows for them
+     * do not count toward the exemption. Subject teachers with this load are
+     * removed from the proctor candidate pool.
+     *
+     * @param  array<string, int|null>  $assignments
+     * @param  Collection<int, Subject>  $subjects
+     * @return array<int, int>
+     */
+    private function subjectTeachingExemptions(array $assignments, Collection $subjects): array
+    {
+        $scheduledSubjectIds = $subjects
+            ->filter(fn (Subject $subject): bool => ! $subject->is_elective)
+            ->pluck('id')
+            ->map(fn ($id): int => (int) $id)
+            ->all();
+
+        $subjectsByTeacher = [];
+
+        foreach ($assignments as $key => $teacherId) {
+            if ($teacherId === null) {
+                continue;
+            }
+
+            $subjectId = (int) explode('-', $key, 2)[1];
+
+            if (! in_array($subjectId, $scheduledSubjectIds, true)) {
+                continue;
+            }
+
+            $subjectsByTeacher[$teacherId][$subjectId] = true;
+        }
+
+        $exempt = [];
+
+        foreach ($subjectsByTeacher as $teacherId => $subjectIds) {
+            if (count($subjectIds) >= 2) {
+                $exempt[] = (int) $teacherId;
+            }
+        }
+
+        return $exempt;
+    }
+
+    /**
+     * Resolve the proctor candidates, optionally restricted to an allow-list.
+     *
+     * @param  array<int, int>|null  $proctorIds
+     * @return array<int, int>
+     */
+    private function proctorCandidates(?array $proctorIds): array
+    {
+        $all = Teacher::orderBy('id')->pluck('id')->map(fn ($id): int => (int) $id)->all();
+
+        if ($proctorIds === null) {
+            return $all;
+        }
+
+        $allowed = array_map('intval', $proctorIds);
+
+        return array_values(array_intersect($all, $allowed));
+    }
+
+    /**
+     * Order teacher ids by cumulative proctorship total, then by lowest id.
      *
      * @param  array<int, int>  $ids
      * @param  array<int, int>  $load
@@ -240,20 +367,37 @@ class ScheduleGenerator
     }
 
     /**
+     * Build the lookup key for a section/subject task.
+     */
+    private function taskKey(Section $section, Subject $subject): string
+    {
+        return ((int) $section->id).'-'.((int) $subject->id);
+    }
+
+    /**
      * Build an unplaced report entry for a task.
      *
-     * @param  array{section: Section, subject: Subject}  $task
      * @return array<string, mixed>
      */
-    private function unplacedEntry(array $task, string $reason): array
-    {
+    private function unplacedEntry(
+        int $day,
+        Section $section,
+        Subject $subject,
+        string $code,
+        string $reason,
+        ?TimePresetSlot $slot,
+    ): array {
         return [
-            'section_id' => (int) $task['section']->id,
-            'section_name' => $task['section']->section_name,
-            'grade_level_id' => (int) $task['section']->grade_level_id,
-            'subject_id' => (int) $task['subject']->id,
-            'subject_name' => $task['subject']->subject_name,
+            'day' => $day,
+            'section_id' => (int) $section->id,
+            'section_name' => $section->section_name,
+            'grade_level_id' => (int) $section->grade_level_id,
+            'subject_id' => (int) $subject->id,
+            'subject_name' => $subject->subject_name,
             'reason' => $reason,
+            'reason_code' => $code,
+            'start_time' => $slot?->start_time,
+            'end_time' => $slot?->end_time,
         ];
     }
 }

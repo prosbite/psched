@@ -27,11 +27,11 @@ class ConflictChecker
         }
 
         foreach ($existing as $entry) {
-            if ($this->sameSection($entry, $candidate) && $this->overlaps($entry, $candidate)) {
+            if ($this->sameDay($entry, $candidate) && $this->sameSection($entry, $candidate) && $this->overlaps($entry, $candidate)) {
                 $reasons[] = 'This section already has an overlapping schedule at this time.';
             }
 
-            if ($this->sharesTeacher($entry, $candidate) && $this->overlaps($entry, $candidate)) {
+            if ($this->sameDay($entry, $candidate) && $this->sharesTeacher($entry, $candidate) && $this->overlaps($entry, $candidate)) {
                 $reasons[] = 'A teacher is already assigned to an overlapping schedule.';
             }
         }
@@ -65,6 +65,7 @@ class ConflictChecker
     public function entryFromSchedule(Schedule $schedule): array
     {
         return [
+            'day' => (int) ($schedule->day ?? 1),
             'section_id' => $schedule->section_id === null ? null : (int) $schedule->section_id,
             'subject_teacher_id' => $schedule->subject_teacher_id === null ? null : (int) $schedule->subject_teacher_id,
             'proctor_id' => $schedule->proctor_id === null ? null : (int) $schedule->proctor_id,
@@ -97,6 +98,20 @@ class ConflictChecker
     {
         return isset($first['section_id'], $second['section_id'])
             && (int) $first['section_id'] === (int) $second['section_id'];
+    }
+
+    /**
+     * Determine whether two entries fall on the same exam day.
+     *
+     * Entries without an explicit "day" are treated as day 1 so that
+     * single-day callers keep their original semantics.
+     *
+     * @param  array<string, mixed>  $first
+     * @param  array<string, mixed>  $second
+     */
+    public function sameDay(array $first, array $second): bool
+    {
+        return (int) ($first['day'] ?? 1) === (int) ($second['day'] ?? 1);
     }
 
     /**
@@ -149,7 +164,9 @@ class ConflictChecker
         $count = 0;
 
         foreach ($existing as $entry) {
-            if (isset($entry['proctor_id']) && (int) $entry['proctor_id'] === (int) $proctor) {
+            if (isset($entry['proctor_id'])
+                && (int) $entry['proctor_id'] === (int) $proctor
+                && $this->sameDay($entry, $candidate)) {
                 $count++;
             }
         }

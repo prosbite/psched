@@ -25,6 +25,7 @@ class ScheduleFactory extends Factory
 
         return [
             'schedule_group_id' => ScheduleGroup::factory(),
+            'day' => 1,
             'section_id' => Section::factory(),
             'subject_id' => Subject::factory(),
             'subject_teacher_id' => Teacher::factory(),

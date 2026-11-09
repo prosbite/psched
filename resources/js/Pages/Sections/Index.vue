@@ -1,6 +1,6 @@
 <script setup>
-import { ref } from 'vue';
-import { Head, useForm } from '@inertiajs/vue3';
+import { computed, ref } from 'vue';
+import { Head, router, useForm } from '@inertiajs/vue3';
 import AdminLayout from '@/Layouts/AdminLayout.vue';
 import FlashBanner from '@/Components/FlashBanner.vue';
 import Modal from '@/Components/Modal.vue';
@@ -10,10 +10,13 @@ import TextInput from '@/Components/TextInput.vue';
 import PrimaryButton from '@/Components/PrimaryButton.vue';
 import SecondaryButton from '@/Components/SecondaryButton.vue';
 
-defineProps({
+const props = defineProps({
     sections: { type: Array, required: true },
     gradeLevels: { type: Array, required: true },
     rooms: { type: Array, required: true },
+    subjects: { type: Array, required: true },
+    teachers: { type: Array, required: true },
+    assignments: { type: Array, required: true },
 });
 
 const showModal = ref(false);
@@ -49,6 +52,51 @@ const destroy = (section) => {
         form.delete(route('sections.destroy', section.id));
     }
 };
+
+const teacherName = (teacher) => [teacher.firstname, teacher.middlename, teacher.lastname].filter(Boolean).join(' ');
+
+const assignModal = ref(false);
+const assigningSection = ref(null);
+const assignmentValues = ref({});
+
+const assignableSubjects = computed(() => {
+    if (!assigningSection.value) {
+        return [];
+    }
+
+    return props.subjects.filter((subject) => subject.grade_level_id === assigningSection.value.grade_level_id);
+});
+
+const assignmentCount = (section) =>
+    props.assignments.filter((assignment) => assignment.section_id === section.id).length;
+
+const openAssign = (section) => {
+    assigningSection.value = section;
+
+    const values = {};
+
+    for (const assignment of props.assignments) {
+        if (assignment.section_id === section.id) {
+            values[assignment.subject_id] = assignment.teacher_id;
+        }
+    }
+
+    assignmentValues.value = values;
+    assignModal.value = true;
+};
+
+const saveAssignments = () => {
+    const payload = assignableSubjects.value.map((subject) => ({
+        subject_id: subject.id,
+        teacher_id: assignmentValues.value[subject.id] ?? '',
+    }));
+
+    router.put(
+        route('sections.assignments.update', assigningSection.value.id),
+        { assignments: payload },
+        { preserveScroll: true, onSuccess: () => (assignModal.value = false) },
+    );
+};
 </script>
 
 <template>
@@ -58,7 +106,7 @@ const destroy = (section) => {
         <FlashBanner />
 
         <div class="mb-4 flex items-center justify-between">
-            <p class="text-sm text-gray-600">Assign each section a grade level and (optionally) its own room.</p>
+            <p class="text-sm text-gray-600">Assign each section a grade level and room, then assign a teacher to each subject.</p>
             <PrimaryButton @click="openCreate">Add Section</PrimaryButton>
         </div>
 
@@ -69,6 +117,7 @@ const destroy = (section) => {
                         <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Section</th>
                         <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Grade Level</th>
                         <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Room</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Assigned Subjects</th>
                         <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Actions</th>
                     </tr>
                 </thead>
@@ -77,13 +126,15 @@ const destroy = (section) => {
                         <td class="px-4 py-3 text-sm text-gray-900">{{ section.section_name }}</td>
                         <td class="px-4 py-3 text-sm text-gray-600">{{ section.grade_level?.grade_level }}</td>
                         <td class="px-4 py-3 text-sm text-gray-600">{{ section.room?.room_name ?? '—' }}</td>
+                        <td class="px-4 py-3 text-sm text-gray-600">{{ assignmentCount(section) }}</td>
                         <td class="whitespace-nowrap px-4 py-3 text-right text-sm">
-                            <button class="text-indigo-600 hover:text-indigo-900" @click="openEdit(section)">Edit</button>
+                            <button class="text-indigo-600 hover:text-indigo-900" @click="openAssign(section)">Assign Teachers</button>
+                            <button class="ms-3 text-indigo-600 hover:text-indigo-900" @click="openEdit(section)">Edit</button>
                             <button class="ms-3 text-red-600 hover:text-red-900" @click="destroy(section)">Delete</button>
                         </td>
                     </tr>
                     <tr v-if="sections.length === 0">
-                        <td colspan="4" class="px-4 py-6 text-center text-sm text-gray-500">No sections yet.</td>
+                        <td colspan="5" class="px-4 py-6 text-center text-sm text-gray-500">No sections yet.</td>
                     </tr>
                 </tbody>
             </table>
@@ -132,6 +183,44 @@ const destroy = (section) => {
                 <div class="mt-6 flex justify-end gap-3">
                     <SecondaryButton type="button" @click="showModal = false">Cancel</SecondaryButton>
                     <PrimaryButton :disabled="form.processing">Save</PrimaryButton>
+                </div>
+            </form>
+        </Modal>
+
+        <Modal :show="assignModal" @close="assignModal = false" max-width="xl">
+            <form class="p-6" @submit.prevent="saveAssignments">
+                <h2 class="text-lg font-medium text-gray-900">
+                    Assign Teachers — {{ assigningSection?.section_name }}
+                </h2>
+                <p class="mt-1 text-sm text-gray-500">
+                    Choose the teacher assigned to each subject for this section. Leave blank if unassigned.
+                </p>
+
+                <div class="mt-4 max-h-96 space-y-3 overflow-y-auto">
+                    <div
+                        v-for="subject in assignableSubjects"
+                        :key="subject.id"
+                        class="grid grid-cols-1 items-center gap-2 sm:grid-cols-2"
+                    >
+                        <span class="text-sm text-gray-700">{{ subject.subject_name }}</span>
+                        <select
+                            v-model="assignmentValues[subject.id]"
+                            class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                        >
+                            <option value="">No teacher</option>
+                            <option v-for="teacher in teachers" :key="teacher.id" :value="teacher.id">
+                                {{ teacherName(teacher) }}
+                            </option>
+                        </select>
+                    </div>
+                    <p v-if="assignableSubjects.length === 0" class="text-sm text-gray-500">
+                        No subjects are defined for this grade level yet.
+                    </p>
+                </div>
+
+                <div class="mt-6 flex justify-end gap-3">
+                    <SecondaryButton type="button" @click="assignModal = false">Cancel</SecondaryButton>
+                    <PrimaryButton>Save Assignments</PrimaryButton>
                 </div>
             </form>
         </Modal>

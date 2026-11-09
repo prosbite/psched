@@ -39,6 +39,14 @@ class Section extends Model
     }
 
     /**
+     * @return HasMany<SectionSubjectTeacher, $this>
+     */
+    public function sectionSubjectTeachers(): HasMany
+    {
+        return $this->hasMany(SectionSubjectTeacher::class);
+    }
+
+    /**
      * @return BelongsToMany<ScheduleGroup, $this>
      */
     public function scheduleGroups(): BelongsToMany

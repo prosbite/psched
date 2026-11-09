@@ -3,9 +3,11 @@
 use App\Http\Controllers\GradeLevelController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\PublicScheduleController;
+use App\Http\Controllers\QuarterController;
 use App\Http\Controllers\RoomController;
 use App\Http\Controllers\ScheduleController;
 use App\Http\Controllers\ScheduleGroupController;
+use App\Http\Controllers\SchoolYearController;
 use App\Http\Controllers\SectionController;
 use App\Http\Controllers\SubjectController;
 use App\Http\Controllers\TeacherController;
@@ -35,10 +37,16 @@ Route::middleware(['auth', 'admin'])->group(function () {
     Route::resource('grade-levels', GradeLevelController::class)->except(['create', 'show', 'edit']);
     Route::resource('rooms', RoomController::class)->except(['create', 'show', 'edit']);
     Route::resource('sections', SectionController::class)->except(['create', 'show', 'edit']);
+    Route::put('sections/{section}/assignments', [SectionController::class, 'assignTeachers'])
+        ->name('sections.assignments.update');
     Route::resource('subjects', SubjectController::class)->except(['create', 'show', 'edit']);
     Route::resource('teachers', TeacherController::class)->except(['create', 'show', 'edit']);
+    Route::get('teachers/{teacher}/details', [TeacherController::class, 'details'])->name('teachers.details');
     Route::resource('users', UserController::class)->except(['create', 'show', 'edit']);
     Route::resource('time-presets', TimePresetController::class)->except(['show']);
+
+    Route::resource('school-years', SchoolYearController::class)->except(['create', 'show', 'edit']);
+    Route::resource('quarters', QuarterController::class)->except(['create', 'show', 'edit']);
 
     Route::resource('schedule-groups', ScheduleGroupController::class);
 

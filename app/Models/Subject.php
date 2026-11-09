@@ -9,10 +9,20 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-#[Fillable(['subject_name', 'grade_level_id'])]
+#[Fillable(['subject_name', 'grade_level_id', 'is_elective'])]
 class Subject extends Model
 {
     use HasFactory;
+
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return [
+            'is_elective' => 'boolean',
+        ];
+    }
 
     /**
      * @return BelongsTo<GradeLevel, $this>
@@ -23,11 +33,11 @@ class Subject extends Model
     }
 
     /**
-     * @return BelongsToMany<Teacher, $this>
+     * @return HasMany<SectionSubjectTeacher, $this>
      */
-    public function teachers(): BelongsToMany
+    public function sectionSubjectTeachers(): HasMany
     {
-        return $this->belongsToMany(Teacher::class, 'teacher_subject')->withTimestamps();
+        return $this->hasMany(SectionSubjectTeacher::class);
     }
 
     /**

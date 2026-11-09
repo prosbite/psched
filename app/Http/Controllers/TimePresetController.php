@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Http\Requests\TimePresetRequest;
+use App\Models\GradeLevel;
 use App\Models\TimePreset;
 use Carbon\Carbon;
 use Illuminate\Http\RedirectResponse;
@@ -30,6 +31,7 @@ class TimePresetController extends Controller
         return Inertia::render('TimePresets/Form', [
             'timePreset' => null,
             'slots' => [],
+            'gradeLevels' => GradeLevel::orderBy('grade_level')->get(),
         ]);
     }
 
@@ -60,7 +62,9 @@ class TimePresetController extends Controller
                 'start_time' => substr((string) $slot->start_time, 0, 5),
                 'end_time' => substr((string) $slot->end_time, 0, 5),
                 'sort_order' => $slot->sort_order,
+                'grade_level_id' => $slot->grade_level_id,
             ])->values(),
+            'gradeLevels' => GradeLevel::orderBy('grade_level')->get(),
         ]);
     }
 
@@ -98,6 +102,7 @@ class TimePresetController extends Controller
     {
         foreach (array_values($slots) as $index => $slot) {
             $preset->slots()->create([
+                'grade_level_id' => $slot['grade_level_id'] ?? null,
                 'start_time' => Carbon::createFromFormat('H:i', $slot['start_time'])->format('H:i:s'),
                 'end_time' => Carbon::createFromFormat('H:i', $slot['end_time'])->format('H:i:s'),
                 'sort_order' => $slot['sort_order'] ?? $index,

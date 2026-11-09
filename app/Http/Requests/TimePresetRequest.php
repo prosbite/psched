@@ -4,6 +4,7 @@ namespace App\Http\Requests;
 
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class TimePresetRequest extends FormRequest
 {
@@ -25,6 +26,7 @@ class TimePresetRequest extends FormRequest
         return [
             'name' => ['required', 'string', 'max:255'],
             'slots' => ['required', 'array', 'min:1'],
+            'slots.*.grade_level_id' => ['nullable', 'integer', Rule::exists('grade_levels', 'id')],
             'slots.*.start_time' => ['required', 'date_format:H:i'],
             'slots.*.end_time' => ['required', 'date_format:H:i'],
             'slots.*.sort_order' => ['nullable', 'integer', 'min:0'],

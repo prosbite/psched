@@ -11,12 +11,18 @@ import SecondaryButton from '@/Components/SecondaryButton.vue';
 const props = defineProps({
     group: { type: Object, default: null },
     timePresets: { type: Array, required: true },
+    schoolYears: { type: Array, required: true },
+    quarters: { type: Array, required: true },
 });
 
 const form = useForm({
     title: props.group?.title ?? '',
     description: props.group?.description ?? '',
     time_preset_id: props.group?.time_preset_id ?? '',
+    days: props.group?.days ?? 3,
+    exams_per_day: props.group?.exams_per_day ?? 3,
+    school_year_id: props.group?.school_year_id ?? '',
+    quarter_id: props.group?.quarter_id ?? '',
     max_proctors_per_teacher: props.group?.max_proctors_per_teacher ?? 2,
 });
 
@@ -55,6 +61,39 @@ const submit = () => {
 
             <div class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
+                    <InputLabel for="school_year_id" value="School Year" />
+                    <select
+                        id="school_year_id"
+                        v-model="form.school_year_id"
+                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                        required
+                    >
+                        <option value="" disabled>Select a school year</option>
+                        <option v-for="year in schoolYears" :key="year.id" :value="year.id">
+                            {{ year.name }}
+                        </option>
+                    </select>
+                    <InputError class="mt-2" :message="form.errors.school_year_id" />
+                </div>
+                <div>
+                    <InputLabel for="quarter_id" value="Quarter" />
+                    <select
+                        id="quarter_id"
+                        v-model="form.quarter_id"
+                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                        required
+                    >
+                        <option value="" disabled>Select a quarter</option>
+                        <option v-for="quarter in quarters" :key="quarter.id" :value="quarter.id">
+                            {{ quarter.name }}
+                        </option>
+                    </select>
+                    <InputError class="mt-2" :message="form.errors.quarter_id" />
+                </div>
+            </div>
+
+            <div class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-4">
+                <div>
                     <InputLabel for="time_preset_id" value="Time Preset" />
                     <select
                         id="time_preset_id"
@@ -69,7 +108,33 @@ const submit = () => {
                     <InputError class="mt-2" :message="form.errors.time_preset_id" />
                 </div>
                 <div>
-                    <InputLabel for="max_proctors_per_teacher" value="Max proctorships per teacher" />
+                    <InputLabel for="days" value="Exam days" />
+                    <TextInput
+                        id="days"
+                        v-model="form.days"
+                        type="number"
+                        min="1"
+                        max="3"
+                        class="mt-1 block w-full"
+                        required
+                    />
+                    <InputError class="mt-2" :message="form.errors.days" />
+                </div>
+                <div>
+                    <InputLabel for="exams_per_day" value="Exams per day" />
+                    <TextInput
+                        id="exams_per_day"
+                        v-model="form.exams_per_day"
+                        type="number"
+                        min="1"
+                        max="10"
+                        class="mt-1 block w-full"
+                        required
+                    />
+                    <InputError class="mt-2" :message="form.errors.exams_per_day" />
+                </div>
+                <div>
+                    <InputLabel for="max_proctors_per_teacher" value="Max proctorships/teacher" />
                     <TextInput
                         id="max_proctors_per_teacher"
                         v-model="form.max_proctors_per_teacher"

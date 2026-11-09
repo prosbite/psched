@@ -12,6 +12,7 @@ import SecondaryButton from '@/Components/SecondaryButton.vue';
 const props = defineProps({
     timePreset: { type: Object, default: null },
     slots: { type: Array, default: () => [] },
+    gradeLevels: { type: Array, default: () => [] },
 });
 
 const form = useForm({
@@ -21,12 +22,16 @@ const form = useForm({
 
 onMounted(() => {
     form.slots = props.slots.length
-        ? props.slots.map((slot) => ({ start_time: slot.start_time, end_time: slot.end_time }))
-        : [{ start_time: '07:00', end_time: '08:00' }];
+        ? props.slots.map((slot) => ({
+            start_time: slot.start_time,
+            end_time: slot.end_time,
+            grade_level_id: slot.grade_level_id ?? '',
+        }))
+        : [{ start_time: '07:00', end_time: '08:00', grade_level_id: '' }];
 });
 
 const addSlot = () => {
-    form.slots.push({ start_time: '', end_time: '' });
+    form.slots.push({ start_time: '', end_time: '', grade_level_id: '' });
 };
 
 const removeSlot = (index) => {
@@ -66,7 +71,7 @@ const submit = () => {
                     <div
                         v-for="(slot, index) in form.slots"
                         :key="index"
-                        class="grid grid-cols-1 items-end gap-3 rounded-md border border-gray-200 p-3 sm:grid-cols-[1fr_1fr_auto]"
+                        class="grid grid-cols-1 items-end gap-3 rounded-md border border-gray-200 p-3 sm:grid-cols-[1fr_1fr_1fr_auto]"
                     >
                         <div>
                             <InputLabel :value="`Start (${index + 1})`" />
@@ -77,6 +82,19 @@ const submit = () => {
                             <InputLabel value="End" />
                             <TextInput v-model="slot.end_time" type="time" class="mt-1 block w-full" required />
                             <InputError class="mt-2" :message="form.errors[`slots.${index}.end_time`]" />
+                        </div>
+                        <div>
+                            <InputLabel value="Grade scope" />
+                            <select
+                                v-model="slot.grade_level_id"
+                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                            >
+                                <option value="">All grades</option>
+                                <option v-for="grade in gradeLevels" :key="grade.id" :value="grade.id">
+                                    Grade {{ grade.grade_level }}
+                                </option>
+                            </select>
+                            <InputError class="mt-2" :message="form.errors[`slots.${index}.grade_level_id`]" />
                         </div>
                         <button
                             type="button"
