@@ -4,9 +4,12 @@ namespace Database\Seeders;
 
 use App\Enums\UserRole;
 use App\Models\GradeLevel;
+use App\Models\Quarter;
 use App\Models\Room;
 use App\Models\ScheduleGroup;
+use App\Models\SchoolYear;
 use App\Models\Section;
+use App\Models\SectionSubjectTeacher;
 use App\Models\Subject;
 use App\Models\Teacher;
 use App\Models\TimePreset;
@@ -17,186 +20,236 @@ use Illuminate\Support\Str;
 class DemoDataSeeder extends Seeder
 {
     /**
-     * Sections per grade level.
+     * The union of the three assessment-day references the demo dataset is extracted from.
      *
-     * @var array<string, array<int, string>>
+     * Each row is one subject sitting in one grade on one reference day, together with the
+     * sections that sit it and the subject teacher that handles each of those sections:
+     * [day, grade, subject, sections, teacher].
+     *
+     * The three references map to the three exam days: day 1 = "B", day 2 = "A", day 3 = "#1".
+     * A subject that is handled by different teachers per section is split into two rows. Rooms and
+     * the day/period of each subject come from {@see SUBJECT_ORDER}, {@see SECTION_ROOMS} and
+     * {@see TIME_BANDS}; proctors are not seeded because the generator assigns them.
+     *
+     * @var array<int, array{day: int, grade: string, subject: string, sections: array<int, string>, teacher: string}>
      */
-    private const SECTIONS = [
-        '7' => ['Aquamarine', 'Opal', 'Sapphire', 'Turquoise'],
-        '8' => ['Anthurium', 'Carnation', 'Daffodil', 'Sunflower'],
-        '9' => ['Calcium', 'Lithium', 'Sodium', 'Barium'],
-        '10' => ['Electron', 'Graviton', 'Proton', 'Neutron'],
-        '11' => ['Mars', 'Mercury', 'Neptune', 'Venus', 'Class 1', 'Class 2', 'Class 3'],
-        '12' => ['Del Mundo', 'Orosa', 'Zara', 'Class 1', 'Class 2'],
+    private const REFERENCE = [
+        // Grade 7
+        ['day' => 1, 'grade' => '7', 'subject' => 'Mathematics 1', 'sections' => ['Aquamarine', 'Opal', 'Turquoise'], 'teacher' => 'Almocera, Divine Faith G.'],
+        ['day' => 1, 'grade' => '7', 'subject' => 'Mathematics 1', 'sections' => ['Sapphire'], 'teacher' => 'Pescueso, Brigette Ursula L.'],
+        ['day' => 1, 'grade' => '7', 'subject' => 'Earth Science', 'sections' => ['Aquamarine', 'Opal'], 'teacher' => 'Hijastro, Jhon Ryan P.'],
+        ['day' => 1, 'grade' => '7', 'subject' => 'Earth Science', 'sections' => ['Sapphire', 'Turquoise'], 'teacher' => 'Sistoso, Reymond A.'],
+        ['day' => 1, 'grade' => '7', 'subject' => 'Social Science 1', 'sections' => ['Aquamarine', 'Opal', 'Sapphire', 'Turquoise'], 'teacher' => 'Orbegoso, Jenny B.'],
+        ['day' => 2, 'grade' => '7', 'subject' => 'Filipino 1', 'sections' => ['Aquamarine', 'Opal', 'Sapphire', 'Turquoise'], 'teacher' => 'Asilom, Baby Jean P.'],
+        ['day' => 2, 'grade' => '7', 'subject' => 'Computer Science 1', 'sections' => ['Aquamarine', 'Opal', 'Sapphire', 'Turquoise'], 'teacher' => 'Payao, Loida Mae U.'],
+        ['day' => 3, 'grade' => '7', 'subject' => 'English 1', 'sections' => ['Aquamarine', 'Opal', 'Sapphire', 'Turquoise'], 'teacher' => 'Subla, Lily Dale M.'],
+        ['day' => 3, 'grade' => '7', 'subject' => 'Integrated Science', 'sections' => ['Aquamarine', 'Opal', 'Turquoise'], 'teacher' => 'Francisco, Rotchie Glen A.'],
+        ['day' => 3, 'grade' => '7', 'subject' => 'Integrated Science', 'sections' => ['Sapphire'], 'teacher' => 'Hijastro, Jhon Ryan P.'],
+
+        // Grade 8
+        ['day' => 1, 'grade' => '8', 'subject' => 'English 2', 'sections' => ['Anthurium', 'Carnation', 'Daffodil', 'Sunflower'], 'teacher' => 'Ahon, Vonna Vejle V.'],
+        ['day' => 1, 'grade' => '8', 'subject' => 'Mathematics 2B', 'sections' => ['Anthurium', 'Carnation', 'Daffodil', 'Sunflower'], 'teacher' => 'Salvan, Vedy Von P.'],
+        ['day' => 1, 'grade' => '8', 'subject' => 'Social Science 2', 'sections' => ['Anthurium', 'Carnation', 'Daffodil', 'Sunflower'], 'teacher' => 'Salang, Keith R.'],
+        ['day' => 2, 'grade' => '8', 'subject' => 'Earth Science', 'sections' => ['Anthurium', 'Carnation', 'Daffodil', 'Sunflower'], 'teacher' => 'Plaza, Maria Bernadette C.'],
+        ['day' => 2, 'grade' => '8', 'subject' => 'Filipino 2', 'sections' => ['Anthurium', 'Carnation', 'Daffodil', 'Sunflower'], 'teacher' => 'Lucresio, Jonnamae Gracia T.'],
+        ['day' => 2, 'grade' => '8', 'subject' => 'Mathematics 2A', 'sections' => ['Anthurium', 'Carnation', 'Daffodil', 'Sunflower'], 'teacher' => 'Altar, Daisyre Mae G.'],
+        ['day' => 3, 'grade' => '8', 'subject' => 'Biology 1', 'sections' => ['Anthurium', 'Carnation', 'Daffodil', 'Sunflower'], 'teacher' => 'Galliguez, Ethel M.'],
+        ['day' => 3, 'grade' => '8', 'subject' => 'Physics 1', 'sections' => ['Anthurium', 'Carnation', 'Daffodil', 'Sunflower'], 'teacher' => 'Segundino, Ken Wood L.'],
+        ['day' => 3, 'grade' => '8', 'subject' => 'Chemistry 1', 'sections' => ['Anthurium', 'Carnation', 'Daffodil', 'Sunflower'], 'teacher' => 'Baloria, Noah T.'],
+
+        // Grade 9
+        ['day' => 1, 'grade' => '9', 'subject' => 'Social Science 3', 'sections' => ['Calicium', 'Lithium'], 'teacher' => 'Bernales, Sidney Marie S.'],
+        ['day' => 1, 'grade' => '9', 'subject' => 'Social Science 3', 'sections' => ['Sodium', 'Barium'], 'teacher' => 'Villareiz, Jestoni M.'],
+        ['day' => 1, 'grade' => '9', 'subject' => 'Statistics 1', 'sections' => ['Calicium', 'Sodium'], 'teacher' => 'Lao, Melchizedek Y.'],
+        ['day' => 1, 'grade' => '9', 'subject' => 'Statistics 1', 'sections' => ['Lithium', 'Barium'], 'teacher' => 'Alerta, Gilbert'],
+        ['day' => 1, 'grade' => '9', 'subject' => 'Chemistry 2', 'sections' => ['Calicium', 'Lithium', 'Sodium', 'Barium'], 'teacher' => 'Perocho, Jayryn J.'],
+        ['day' => 2, 'grade' => '9', 'subject' => 'Mathematics 3', 'sections' => ['Calicium', 'Lithium', 'Sodium', 'Barium'], 'teacher' => 'Pescueso, Brigette Ursula L.'],
+        ['day' => 2, 'grade' => '9', 'subject' => 'Filipino 3', 'sections' => ['Calicium', 'Lithium', 'Sodium', 'Barium'], 'teacher' => 'Mahinay, Nikki Lou L.'],
+        ['day' => 2, 'grade' => '9', 'subject' => 'Computer Science 3', 'sections' => ['Calicium', 'Lithium', 'Sodium', 'Barium'], 'teacher' => 'Fernando, Alvin C.'],
+        ['day' => 3, 'grade' => '9', 'subject' => 'Biology 2', 'sections' => ['Calicium', 'Lithium', 'Sodium', 'Barium'], 'teacher' => 'Maique, Jay M.'],
+        ['day' => 3, 'grade' => '9', 'subject' => 'English 3', 'sections' => ['Calicium', 'Lithium', 'Sodium', 'Barium'], 'teacher' => 'Garcia, Kenneth Jeason B.'],
+        ['day' => 3, 'grade' => '9', 'subject' => 'Physics 2', 'sections' => ['Calicium', 'Lithium', 'Sodium', 'Barium'], 'teacher' => 'Llido, Deborah Gwen G.'],
+
+        // Grade 10
+        ['day' => 1, 'grade' => '10', 'subject' => 'Chemistry 2', 'sections' => ['Electron', 'Graviton', 'Proton', 'Neutron'], 'teacher' => 'Demco, Aphryl Danril B.'],
+        ['day' => 1, 'grade' => '10', 'subject' => 'Social Science 4', 'sections' => ['Electron', 'Graviton', 'Proton', 'Neutron'], 'teacher' => 'Bernales, Sidney Marie S.'],
+        ['day' => 2, 'grade' => '10', 'subject' => 'Filipino 4', 'sections' => ['Electron', 'Graviton', 'Proton', 'Neutron'], 'teacher' => 'Cuadrazal, Rea Frechie C.'],
+        ['day' => 2, 'grade' => '10', 'subject' => 'Mathematics 4', 'sections' => ['Electron', 'Graviton', 'Proton', 'Neutron'], 'teacher' => 'Boniel, Charles Daniel V.'],
+        ['day' => 3, 'grade' => '10', 'subject' => 'English 4', 'sections' => ['Electron', 'Graviton', 'Proton', 'Neutron'], 'teacher' => 'Jenisan, Armari Eljen E.'],
+        ['day' => 3, 'grade' => '10', 'subject' => 'Biology 2', 'sections' => ['Electron', 'Graviton', 'Proton', 'Neutron'], 'teacher' => 'Alcando, Darrell'],
+        ['day' => 3, 'grade' => '10', 'subject' => 'Physics 2', 'sections' => ['Electron', 'Proton'], 'teacher' => 'Dumaicos, Aviel Sheen V.'],
+        ['day' => 3, 'grade' => '10', 'subject' => 'Physics 2', 'sections' => ['Graviton', 'Neutron'], 'teacher' => 'Sala, John Niño C.'],
+
+        // Grade 11
+        ['day' => 2, 'grade' => '11', 'subject' => 'Mathematics 5', 'sections' => ['Mars', 'Mercury', 'Neptune', 'Venus'], 'teacher' => 'Mordeno, Patricia Therese M.'],
+        ['day' => 2, 'grade' => '11', 'subject' => 'Social Science 5', 'sections' => ['Mars', 'Mercury', 'Neptune', 'Venus'], 'teacher' => 'Villareiz, Jestoni M.'],
+        ['day' => 3, 'grade' => '11', 'subject' => 'Physics 3 Level 2 (Science Core)', 'sections' => ['Mars'], 'teacher' => 'Dumaicos, Aviel Sheen V.'],
+        ['day' => 3, 'grade' => '11', 'subject' => 'Biology 3 Level 2 (Science Core)', 'sections' => ['Class 1'], 'teacher' => 'Penados, John Michael'],
+        ['day' => 3, 'grade' => '11', 'subject' => 'Biology 3 Level 2 (Science Core)', 'sections' => ['Class 2'], 'teacher' => 'Ganzon, Mary Ann M.'],
+        ['day' => 3, 'grade' => '11', 'subject' => 'Biology 3 Level 2 (Science Core)', 'sections' => ['Class 3'], 'teacher' => 'Alcando, Darrell'],
+        ['day' => 3, 'grade' => '11', 'subject' => 'Fillipino 5', 'sections' => ['Mars', 'Mercury', 'Neptune', 'Venus'], 'teacher' => 'Mordeno, Yvonne M.'],
+
+        // Grade 12
+        ['day' => 2, 'grade' => '12', 'subject' => 'Social Science 6', 'sections' => ['Del Mundo', 'Orosa', 'Zara'], 'teacher' => 'Abamonga, Maricris C.'],
+        ['day' => 2, 'grade' => '12', 'subject' => 'Mathematics 6', 'sections' => ['Del Mundo', 'Orosa', 'Zara'], 'teacher' => 'Empuesto, Gretchen Mae B.'],
+        ['day' => 3, 'grade' => '12', 'subject' => 'Biology 4 Level 2 (Science Core)', 'sections' => ['Class 1'], 'teacher' => 'Ganzon, Mary Ann M.'],
+        ['day' => 3, 'grade' => '12', 'subject' => 'Biology 4 Level 2 (Science Core)', 'sections' => ['Class 2'], 'teacher' => 'Bayron, Janina Erika'],
+        ['day' => 3, 'grade' => '12', 'subject' => 'Fillipino 6', 'sections' => ['Del Mundo', 'Orosa', 'Zara'], 'teacher' => 'Dechusa, John Ridan D.'],
     ];
 
     /**
-     * Subjects per grade level.
+     * Ordered subjects per grade, in the order they sit across the three exam days.
+     *
+     * This is the source of the group's per-grade `sort_order`; the generator chunks it by
+     * `exams_per_day` to derive each subject's day and period. Electives (`Elective` for grades 10
+     * to 12) are included at their third position but produce no schedule rows.
      *
      * @var array<string, array<int, string>>
      */
-    private const SUBJECTS = [
+    private const SUBJECT_ORDER = [
         '7' => ['Mathematics 1', 'Earth Science', 'Social Science 1', 'Filipino 1', 'Computer Science 1', 'English 1', 'Integrated Science'],
         '8' => ['English 2', 'Mathematics 2B', 'Social Science 2', 'Earth Science', 'Filipino 2', 'Mathematics 2A', 'Biology 1', 'Physics 1', 'Chemistry 1'],
         '9' => ['Social Science 3', 'Statistics 1', 'Chemistry 2', 'Mathematics 3', 'Filipino 3', 'Computer Science 3', 'Biology 2', 'English 3', 'Physics 2'],
-        '10' => ['Chemistry 3', 'Social Science 4', 'Filipino 4', 'Mathematics 4', 'English 4', 'Biology 2', 'Physics 2'],
-        '11' => ['Mathematics 5', 'Social Science 5', 'Physics 3 Level 2 (Science Core)', 'Biology 3 Level 2 (Science Core)', 'Filipino 5'],
-        '12' => ['Social Science 6', 'Mathematics 6', 'Biology 4 Level 2 (Science Core)', 'Filipino 6'],
+        '10' => ['Chemistry 2', 'Social Science 4', 'Elective', 'Filipino 4', 'Mathematics 4', 'English 4', 'Biology 2', 'Physics 2'],
+        '11' => ['Mathematics 5', 'Social Science 5', 'Elective', 'Physics 3 Level 2 (Science Core)', 'Biology 3 Level 2 (Science Core)', 'Fillipino 5'],
+        '12' => ['Social Science 6', 'Mathematics 6', 'Elective', 'Biology 4 Level 2 (Science Core)', 'Fillipino 6'],
     ];
 
     /**
-     * The unique teachers in the data, keyed by the name used in the mapping.
+     * Elective subjects per grade. They hold a slot in the timetable but yield no schedule rows.
      *
-     * @var array<string, array{lastname: string, firstname: string, middlename: string|null}>
+     * @var array<string, string>
      */
-    private const TEACHERS = [
-        'Almocera, Divine Faith G.' => ['lastname' => 'Almocera', 'firstname' => 'Divine Faith', 'middlename' => 'G.'],
-        'Pascual, Brigette Ursula L.' => ['lastname' => 'Pascual', 'firstname' => 'Brigette Ursula', 'middlename' => 'L.'],
-        'Hijan, Jhon Ryan P.' => ['lastname' => 'Hijan', 'firstname' => 'Jhon Ryan', 'middlename' => 'P.'],
-        'Salazar, Raymond A.' => ['lastname' => 'Salazar', 'firstname' => 'Raymond', 'middlename' => 'A.'],
-        'Ortigosa, Jenny B.' => ['lastname' => 'Ortigosa', 'firstname' => 'Jenny', 'middlename' => 'B.'],
-        'Añon, Verna Velia V.' => ['lastname' => 'Añon', 'firstname' => 'Verna Velia', 'middlename' => 'V.'],
-        'Salvan, Wendy Von P.' => ['lastname' => 'Salvan', 'firstname' => 'Wendy Von', 'middlename' => 'P.'],
-        'Salang, Keith R.' => ['lastname' => 'Salang', 'firstname' => 'Keith', 'middlename' => 'R.'],
-        'Bernales, Sichey Marie S.' => ['lastname' => 'Bernales', 'firstname' => 'Sichey Marie', 'middlename' => 'S.'],
-        'Uliareb, Jeston M.' => ['lastname' => 'Uliareb', 'firstname' => 'Jeston', 'middlename' => 'M.'],
-        'Lao, Melchizedek Y.' => ['lastname' => 'Lao', 'firstname' => 'Melchizedek', 'middlename' => 'Y.'],
-        'Alerio, Gilbert' => ['lastname' => 'Alerio', 'firstname' => 'Gilbert', 'middlename' => null],
-        'Parocho, Jayryn J.' => ['lastname' => 'Parocho', 'firstname' => 'Jayryn', 'middlename' => 'J.'],
-        'Damco, Ashlyn Sarah B.' => ['lastname' => 'Damco', 'firstname' => 'Ashlyn Sarah', 'middlename' => 'B.'],
-        'Asilom, Baby Jean P.' => ['lastname' => 'Asilom', 'firstname' => 'Baby Jean', 'middlename' => 'P.'],
-        'Loida Mae U. Payao' => ['lastname' => 'Payao', 'firstname' => 'Loida Mae', 'middlename' => 'U.'],
-        'Plaza, Maria Bernadette' => ['lastname' => 'Plaza', 'firstname' => 'Maria Bernadette', 'middlename' => null],
-        'Lucresio, Jonnamae Gracia T.' => ['lastname' => 'Lucresio', 'firstname' => 'Jonnamae Gracia', 'middlename' => 'T.'],
-        'Altar, Daisyre Mae G.' => ['lastname' => 'Altar', 'firstname' => 'Daisyre Mae', 'middlename' => 'G.'],
-        'Pescueso, Brigette Ursula L.' => ['lastname' => 'Pescueso', 'firstname' => 'Brigette Ursula', 'middlename' => 'L.'],
-        'Mahinay, Nikki Lou L.' => ['lastname' => 'Mahinay', 'firstname' => 'Nikki Lou', 'middlename' => 'L.'],
-        'Fernando, Alvin C.' => ['lastname' => 'Fernando', 'firstname' => 'Alvin', 'middlename' => 'C.'],
-        'Cuadrazal, Rea Frechie C.' => ['lastname' => 'Cuadrazal', 'firstname' => 'Rea Frechie', 'middlename' => 'C.'],
-        'Boniel, Charles Daniel' => ['lastname' => 'Boniel', 'firstname' => 'Charles Daniel', 'middlename' => null],
-        'Mordeno, Patricia Therese M.' => ['lastname' => 'Mordeno', 'firstname' => 'Patricia Therese', 'middlename' => 'M.'],
-        'Villareiz, Jestoni M.' => ['lastname' => 'Villareiz', 'firstname' => 'Jestoni', 'middlename' => 'M.'],
-        'Abamonga, Maricris C.' => ['lastname' => 'Abamonga', 'firstname' => 'Maricris', 'middlename' => 'C.'],
-        'Empuesto, Gretchen Mae B.' => ['lastname' => 'Empuesto', 'firstname' => 'Gretchen Mae', 'middlename' => 'B.'],
-        'Subla, Lily Dale M.' => ['lastname' => 'Subla', 'firstname' => 'Lily Dale', 'middlename' => 'M.'],
-        'Francisco, Rotchie Glen A.' => ['lastname' => 'Francisco', 'firstname' => 'Rotchie Glen', 'middlename' => 'A.'],
-        'Galliguez, Ethel M.' => ['lastname' => 'Galliguez', 'firstname' => 'Ethel', 'middlename' => 'M.'],
-        'Segundino, Ken Wood L.' => ['lastname' => 'Segundino', 'firstname' => 'Ken Wood', 'middlename' => 'L.'],
-        'Baloria, Noah T.' => ['lastname' => 'Baloria', 'firstname' => 'Noah', 'middlename' => 'T.'],
-        'Maique, Jay M.' => ['lastname' => 'Maique', 'firstname' => 'Jay', 'middlename' => 'M.'],
-        'Garcia, Kenneth Jeason B.' => ['lastname' => 'Garcia', 'firstname' => 'Kenneth Jeason', 'middlename' => 'B.'],
-        'Llido, Deborah Gwen G.' => ['lastname' => 'Llido', 'firstname' => 'Deborah Gwen', 'middlename' => 'G.'],
-        'Jenisan, Armari Eljen E.' => ['lastname' => 'Jenisan', 'firstname' => 'Armari Eljen', 'middlename' => 'E.'],
-        'Alcando, Darell' => ['lastname' => 'Alcando', 'firstname' => 'Darell', 'middlename' => null],
-        'Dumaicos, Aviel Sheen V.' => ['lastname' => 'Dumaicos', 'firstname' => 'Aviel Sheen', 'middlename' => 'V.'],
-        'Sala, John Niño C.' => ['lastname' => 'Sala', 'firstname' => 'John Niño', 'middlename' => 'C.'],
-        'Penados, Jhon Michael' => ['lastname' => 'Penados', 'firstname' => 'Jhon Michael', 'middlename' => null],
-        'Ganzon, Mary Ann M.' => ['lastname' => 'Ganzon', 'firstname' => 'Mary Ann', 'middlename' => 'M.'],
-        'Mordeno, Yvonne M.' => ['lastname' => 'Mordeno', 'firstname' => 'Yvonne', 'middlename' => 'M.'],
-        'Bayron, Janina Erika S.' => ['lastname' => 'Bayron', 'firstname' => 'Janina Erika', 'middlename' => 'S.'],
-        'Dechusa, John Ridan D.' => ['lastname' => 'Dechusa', 'firstname' => 'John Ridan', 'middlename' => 'D.'],
+    private const ELECTIVES = [
+        '10' => 'Elective',
+        '11' => 'Elective',
+        '12' => 'Elective',
     ];
 
     /**
-     * The subject/teacher assignment pairs extracted from the data, per grade.
+     * Section -> room assignment per grade (consistent across all three references).
      *
-     * @var array<string, array<string, array<int, string>>>
+     * Rooms are shared records matched by name; several room names repeat across sections.
+     *
+     * @var array<string, array<string, string>>
      */
-    private const SUBJECT_TEACHERS = [
-        '7' => [
-            'Mathematics 1' => ['Almocera, Divine Faith G.', 'Pascual, Brigette Ursula L.'],
-            'Earth Science' => ['Hijan, Jhon Ryan P.', 'Salazar, Raymond A.'],
-            'Social Science 1' => ['Ortigosa, Jenny B.'],
-            'Filipino 1' => ['Asilom, Baby Jean P.'],
-            'Computer Science 1' => ['Loida Mae U. Payao'],
-            'English 1' => ['Subla, Lily Dale M.'],
-            'Integrated Science' => ['Francisco, Rotchie Glen A.'],
-        ],
-        '8' => [
-            'English 2' => ['Añon, Verna Velia V.'],
-            'Mathematics 2B' => ['Salvan, Wendy Von P.'],
-            'Social Science 2' => ['Salang, Keith R.'],
-            'Earth Science' => ['Plaza, Maria Bernadette'],
-            'Filipino 2' => ['Lucresio, Jonnamae Gracia T.'],
-            'Mathematics 2A' => ['Altar, Daisyre Mae G.'],
-            'Biology 1' => ['Galliguez, Ethel M.'],
-            'Physics 1' => ['Segundino, Ken Wood L.'],
-            'Chemistry 1' => ['Baloria, Noah T.'],
-        ],
-        '9' => [
-            'Social Science 3' => ['Bernales, Sichey Marie S.', 'Uliareb, Jeston M.'],
-            'Statistics 1' => ['Lao, Melchizedek Y.', 'Alerio, Gilbert'],
-            'Chemistry 2' => ['Parocho, Jayryn J.'],
-            'Mathematics 3' => ['Pescueso, Brigette Ursula L.'],
-            'Filipino 3' => ['Mahinay, Nikki Lou L.'],
-            'Computer Science 3' => ['Fernando, Alvin C.'],
-            'Biology 2' => ['Maique, Jay M.'],
-            'English 3' => ['Garcia, Kenneth Jeason B.'],
-            'Physics 2' => ['Llido, Deborah Gwen G.'],
-        ],
-        '10' => [
-            'Chemistry 3' => ['Damco, Ashlyn Sarah B.'],
-            'Social Science 4' => ['Bernales, Sichey Marie S.'],
-            'Filipino 4' => ['Cuadrazal, Rea Frechie C.'],
-            'Mathematics 4' => ['Boniel, Charles Daniel'],
-            'English 4' => ['Jenisan, Armari Eljen E.'],
-            'Biology 2' => ['Alcando, Darell'],
-            'Physics 2' => ['Dumaicos, Aviel Sheen V.', 'Sala, John Niño C.'],
-        ],
-        '11' => [
-            'Mathematics 5' => ['Mordeno, Patricia Therese M.'],
-            'Social Science 5' => ['Villareiz, Jestoni M.'],
-            'Physics 3 Level 2 (Science Core)' => ['Dumaicos, Aviel Sheen V.'],
-            'Biology 3 Level 2 (Science Core)' => ['Penados, Jhon Michael', 'Ganzon, Mary Ann M.', 'Alcando, Darell'],
-            'Filipino 5' => ['Mordeno, Yvonne M.'],
-        ],
-        '12' => [
-            'Social Science 6' => ['Abamonga, Maricris C.'],
-            'Mathematics 6' => ['Empuesto, Gretchen Mae B.'],
-            'Biology 4 Level 2 (Science Core)' => ['Ganzon, Mary Ann M.', 'Bayron, Janina Erika S.'],
-            'Filipino 6' => ['Dechusa, John Ridan D.'],
-        ],
+    private const SECTION_ROOMS = [
+        '7' => ['Aquamarine' => 'Daffodil', 'Opal' => 'Anthurium', 'Sapphire' => 'Calicium', 'Turquoise' => 'Electron'],
+        '8' => ['Anthurium' => 'Graviton', 'Carnation' => 'Aquamarine', 'Daffodil' => 'Lithium', 'Sunflower' => 'Opal'],
+        '9' => ['Calicium' => 'Neutron', 'Lithium' => 'Sapphire', 'Sodium' => 'Turquoise', 'Barium' => 'Carnation'],
+        '10' => ['Electron' => 'Sunflower', 'Graviton' => 'Sodium', 'Proton' => 'Barium', 'Neutron' => 'Proton'],
+        '11' => ['Mars' => 'Mars', 'Mercury' => 'Mercury', 'Neptune' => 'Neptune', 'Venus' => 'Venus', 'Class 1' => 'Venus', 'Class 2' => 'Neptune', 'Class 3' => 'Mercury'],
+        '12' => ['Class 1' => 'Orosa', 'Class 2' => 'Del Mundo', 'Del Mundo' => 'Del Mundo', 'Orosa' => 'Orosa', 'Zara' => 'Zara'],
     ];
 
     /**
-     * Seed the demo dataset extracted from the assessment schedule.
+     * The default time band (grade scope `null`), indexed by period.
+     *
+     * The references use a different band per exam day, but `time_preset_slots` is scoped per grade
+     * rather than per day, so a single band per grade is chosen here and per-day times cannot be
+     * represented until the schema gains day-scoped slots.
+     *
+     * @var array<int, array{0: string, 1: string}>
+     */
+    private const DEFAULT_TIME_BANDS = [
+        ['08:00', '09:00'],
+        ['09:30', '10:30'],
+        ['11:00', '12:00'],
+    ];
+
+    /**
+     * Grade-specific time bands that override the default (grades 10 to 12 offset 30 minutes).
+     *
+     * @var array<string, array<int, array{0: string, 1: string}>>
+     */
+    private const TIME_BANDS = [
+        '10' => [['07:30', '08:30'], ['09:00', '10:00'], ['10:30', '12:00']],
+        '11' => [['07:30', '08:30'], ['09:00', '10:00'], ['10:30', '12:00']],
+        '12' => [['07:30', '08:30'], ['09:00', '10:00'], ['10:30', '12:00']],
+    ];
+
+    /**
+     * Proctor-only people (they never appear in the reference `teacher` column).
+     *
+     * The full roster is the union of every teacher in {@see REFERENCE} and these people, so that
+     * every proctor name shown in the references is selectable; the generator still assigns the
+     * actual proctors.
+     *
+     * @var array<int, string>
+     */
+    private const PROCTORS = [
+        'Abrea, Charmaine B.',
+        'Baguio, Louege N.',
+        'Baje, Benito A.',
+        'Bermoy, Lyndon R.',
+        'Bohol, Jan Grenechaux V.',
+        'Chavez, Hernan',
+        'Dominguez, Marchone O',
+        'Fernando, Chardy C.',
+        'Fernando, Michelle B.',
+        'Fulay, Louren P.',
+        'Galeon, Jesse Vim R.',
+        'Garrido, Hannah Elizabeth P.',
+        'Grado, JL-Joshua B.',
+        'Gumapac, Jasmine S.',
+        'Lozano, Liezl Mae B.',
+        'Morales, Shriegley Mae R.',
+        'Nemeño, Nestor "Bong" Jr. B.',
+        'Nuñez, Nerry C.',
+        'Principe, Giuseppe A.',
+        'Ramayla, Sherry P.',
+        'San Miguel, Alexis Dave',
+        'Sanchez, Jecelyn E.',
+        'Sionosa, Glenn M.',
+        'Tarre, Merriame Danielle G.',
+        'Valencia, Ma.Riza F.',
+        'Yamit, Marian Mae M.',
+    ];
+
+    /**
+     * Seed the demo dataset extracted from the three assessment-day references.
      */
     public function run(): void
     {
         $gradeLevels = [];
 
-        foreach (array_keys(self::SECTIONS) as $grade) {
+        foreach (array_keys(self::SUBJECT_ORDER) as $grade) {
             $gradeLevels[$grade] = GradeLevel::firstOrCreate([
                 'grade_level' => $grade,
             ]);
         }
 
         $subjects = $this->seedSubjects($gradeLevels);
-        $this->seedSections($gradeLevels);
+        $sections = $this->seedSections($gradeLevels);
 
         $teachers = $this->seedTeachers();
 
-        $this->assignSubjectTeachers($subjects, $teachers);
+        $this->assignSubjectTeachers($subjects, $sections, $teachers);
 
-        $this->seedScheduleGroup();
+        $this->seedScheduleGroup($gradeLevels, $subjects);
     }
 
     /**
-     * Seed the unique subjects and return them keyed by grade level, then name.
+     * Seed the unique subjects, keyed by grade level then subject name.
      *
      * @param  array<string, GradeLevel>  $gradeLevels
-     * @return array<string, array<string, Subject>>
+     * @return array<string, Subject>
      */
     private function seedSubjects(array $gradeLevels): array
     {
         $subjects = [];
 
-        foreach (self::SUBJECTS as $grade => $names) {
+        foreach (self::SUBJECT_ORDER as $grade => $names) {
             foreach ($names as $name) {
-                $subjects[$grade][$name] = Subject::firstOrCreate([
-                    'subject_name' => $name,
-                    'grade_level_id' => $gradeLevels[$grade]->id,
-                ]);
+                $subjects[$grade.'|'.$name] = Subject::firstOrCreate(
+                    [
+                        'subject_name' => $name,
+                        'grade_level_id' => $gradeLevels[$grade]->id,
+                    ],
+                    [
+                        'is_elective' => (self::ELECTIVES[$grade] ?? null) === $name,
+                    ],
+                );
             }
         }
 
@@ -204,31 +257,61 @@ class DemoDataSeeder extends Seeder
     }
 
     /**
-     * Seed the unique sections, each paired with a room of the same name.
+     * Seed the unique sections with their assigned rooms, keyed by grade level then section name.
      *
      * @param  array<string, GradeLevel>  $gradeLevels
+     * @return array<string, Section>
      */
-    private function seedSections(array $gradeLevels): void
+    private function seedSections(array $gradeLevels): array
     {
-        foreach (self::SECTIONS as $grade => $names) {
-            foreach ($names as $name) {
+        $sections = [];
+
+        foreach (self::SECTION_ROOMS as $grade => $rooms) {
+            foreach ($rooms as $sectionName => $roomName) {
                 $section = Section::firstOrCreate([
-                    'section_name' => $name,
+                    'section_name' => $sectionName,
                     'grade_level_id' => $gradeLevels[$grade]->id,
                 ]);
 
-                if ($section->room_id === null) {
-                    $room = Room::where('room_name', $name)->whereDoesntHave('sections')->first()
-                        ?? Room::create(['room_name' => $name]);
+                $room = Room::firstOrCreate(['room_name' => $roomName]);
 
-                    $section->update(['room_id' => $room->id]);
-                }
+                $section->update(['room_id' => $room->id]);
+
+                $sections[$grade.'|'.$sectionName] = $section;
             }
         }
+
+        return $sections;
     }
 
     /**
-     * Seed the unique teachers (each with a login) and return them keyed by the data name.
+     * Split a "Lastname, Firstname M." name into its parts.
+     *
+     * @return array{lastname: string, firstname: string, middlename: string|null}
+     */
+    private function parseTeacherName(string $name): array
+    {
+        [$lastname, $rest] = array_map('trim', explode(',', $name, 2));
+
+        $parts = preg_split('/\s+/', $rest) ?: [];
+
+        $middlename = null;
+
+        if (count($parts) > 1 && preg_match('/^[A-Za-z]\.?$/', end($parts)) === 1) {
+            $middlename = array_pop($parts);
+        }
+
+        return [
+            'lastname' => $lastname,
+            'firstname' => implode(' ', $parts),
+            'middlename' => $middlename,
+        ];
+    }
+
+    /**
+     * Seed every person in the roster (each with a login), keyed by the name used in the data.
+     *
+     * The roster is the union of all reference subject teachers and the proctor-only people.
      *
      * @return array<string, Teacher>
      */
@@ -236,7 +319,18 @@ class DemoDataSeeder extends Seeder
     {
         $teachers = [];
 
-        foreach (self::TEACHERS as $name => $data) {
+        $names = array_merge(
+            array_map(fn (array $row): string => $row['teacher'], self::REFERENCE),
+            self::PROCTORS,
+        );
+
+        foreach ($names as $name) {
+            if (isset($teachers[$name])) {
+                continue;
+            }
+
+            $data = $this->parseTeacherName($name);
+
             $email = Str::slug($data['lastname']).'.'.Str::slug($data['firstname']).'@example.com';
 
             $user = User::updateOrCreate(
@@ -266,51 +360,110 @@ class DemoDataSeeder extends Seeder
     }
 
     /**
-     * Fetch the seeded subjects and teachers and assign the subject/teacher links.
+     * Assign exactly one teacher to each (section, subject) pair from the references.
      *
-     * @param  array<string, array<string, Subject>>  $subjects
+     * @param  array<string, Subject>  $subjects
+     * @param  array<string, Section>  $sections
      * @param  array<string, Teacher>  $teachers
      */
-    private function assignSubjectTeachers(array $subjects, array $teachers): void
+    private function assignSubjectTeachers(array $subjects, array $sections, array $teachers): void
     {
-        foreach (self::SUBJECT_TEACHERS as $grade => $subjectTeachers) {
-            foreach ($subjectTeachers as $subjectName => $teacherNames) {
-                $teacherIds = collect($teacherNames)
-                    ->map(fn (string $name): int => $teachers[$name]->id)
-                    ->all();
+        foreach (self::REFERENCE as $row) {
+            $subject = $subjects[$row['grade'].'|'.$row['subject']] ?? null;
+            $teacher = $teachers[$row['teacher']] ?? null;
 
-                $subjects[$grade][$subjectName]->teachers()->syncWithoutDetaching($teacherIds);
+            if ($subject === null || $teacher === null) {
+                continue;
+            }
+
+            foreach ($row['sections'] as $sectionName) {
+                $section = $sections[$row['grade'].'|'.$sectionName] ?? null;
+
+                if ($section === null) {
+                    continue;
+                }
+
+                SectionSubjectTeacher::updateOrCreate(
+                    [
+                        'section_id' => $section->id,
+                        'subject_id' => $subject->id,
+                    ],
+                    [
+                        'teacher_id' => $teacher->id,
+                    ],
+                );
             }
         }
     }
 
     /**
-     * Seed the reusable time preset and a draft schedule group.
+     * Seed the reusable time preset and a draft schedule group covering all three exam days.
+     *
+     * @param  array<string, GradeLevel>  $gradeLevels
+     * @param  array<string, Subject>  $subjects
      */
-    private function seedScheduleGroup(): void
+    private function seedScheduleGroup(array $gradeLevels, array $subjects): void
     {
         $preset = TimePreset::firstOrCreate(['name' => 'Standard Exam Day']);
 
-        foreach (['07:00', '08:00', '09:00', '10:00', '11:00'] as $index => $start) {
-            $preset->slots()->firstOrCreate(
-                ['start_time' => sprintf('%s:00', $start)],
-                [
-                    'end_time' => sprintf('%02d:00:00', ((int) substr($start, 0, 2)) + 1),
-                    'sort_order' => $index,
-                ],
-            );
+        $preset->slots()->delete();
+
+        foreach (self::DEFAULT_TIME_BANDS as $period => [$start, $end]) {
+            $preset->slots()->create([
+                'grade_level_id' => null,
+                'start_time' => $start.':00',
+                'end_time' => $end.':00',
+                'sort_order' => $period,
+            ]);
         }
+
+        foreach (self::TIME_BANDS as $grade => $bands) {
+            foreach ($bands as $period => [$start, $end]) {
+                $preset->slots()->create([
+                    'grade_level_id' => $gradeLevels[$grade]->id,
+                    'start_time' => $start.':00',
+                    'end_time' => $end.':00',
+                    'sort_order' => $period,
+                ]);
+            }
+        }
+
+        $schoolYear = SchoolYear::orderByDesc('name')->first() ?? SchoolYear::factory()->create();
+        $quarter = Quarter::orderBy('start_date')->first() ?? Quarter::factory()->create();
 
         $group = ScheduleGroup::firstOrCreate(
             ['title' => 'Demo Exam Day'],
             [
-                'description' => 'A sample scheduling day for demonstration.',
+                'description' => 'A three-day sample assessment for Grades 7 to 12.',
+                'days' => 3,
+                'exams_per_day' => 3,
                 'time_preset_id' => $preset->id,
+                'school_year_id' => $schoolYear->id,
+                'quarter_id' => $quarter->id,
                 'max_proctors_per_teacher' => 2,
             ],
         );
 
-        $group->sections()->syncWithoutDetaching(Section::pluck('id')->all());
-        $group->subjects()->syncWithoutDetaching(Subject::pluck('id')->all());
+        $group->update([
+            'time_preset_id' => $preset->id,
+            'days' => 3,
+            'exams_per_day' => 3,
+            'school_year_id' => $schoolYear->id,
+            'quarter_id' => $quarter->id,
+        ]);
+
+        $group->sections()->sync(Section::pluck('id')->all());
+
+        $sync = [];
+
+        foreach (self::SUBJECT_ORDER as $grade => $names) {
+            foreach ($names as $order => $name) {
+                $subject = $subjects[$grade.'|'.$name];
+
+                $sync[$subject->id] = ['sort_order' => $order];
+            }
+        }
+
+        $group->subjects()->sync($sync);
     }
 }

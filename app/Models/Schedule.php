@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 #[Fillable([
     'schedule_group_id',
+    'day',
     'section_id',
     'subject_id',
     'subject_teacher_id',
@@ -19,6 +20,16 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class Schedule extends Model
 {
     use HasFactory;
+
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return [
+            'day' => 'integer',
+        ];
+    }
 
     /**
      * @return BelongsTo<ScheduleGroup, $this>

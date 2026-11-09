@@ -18,7 +18,7 @@ class SubjectController extends Controller
     public function index(): Response
     {
         return Inertia::render('Subjects/Index', [
-            'subjects' => Subject::with('gradeLevel')->withCount('teachers')->orderBy('subject_name')->get(),
+            'subjects' => Subject::with('gradeLevel')->withCount('sectionSubjectTeachers')->orderBy('subject_name')->get(),
             'gradeLevels' => GradeLevel::orderBy('grade_level')->get(),
         ]);
     }

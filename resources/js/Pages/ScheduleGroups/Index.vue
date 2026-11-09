@@ -42,6 +42,9 @@ const destroy = (group) => {
                     <tr>
                         <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Title</th>
                         <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Status</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">School Year</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Quarter</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Days</th>
                         <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Time Preset</th>
                         <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Sections</th>
                         <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Subjects</th>
@@ -57,6 +60,9 @@ const destroy = (group) => {
                                 {{ group.status }}
                             </span>
                         </td>
+                        <td class="px-4 py-3 text-sm text-gray-600">{{ group.school_year?.name ?? '—' }}</td>
+                        <td class="px-4 py-3 text-sm text-gray-600">{{ group.quarter?.name ?? '—' }}</td>
+                        <td class="px-4 py-3 text-sm text-gray-600">{{ group.days ?? '—' }} × {{ group.exams_per_day ?? '—' }}</td>
                         <td class="px-4 py-3 text-sm text-gray-600">{{ group.time_preset?.name ?? '—' }}</td>
                         <td class="px-4 py-3 text-sm text-gray-600">{{ group.sections_count }}</td>
                         <td class="px-4 py-3 text-sm text-gray-600">{{ group.subjects_count }}</td>
@@ -68,7 +74,7 @@ const destroy = (group) => {
                         </td>
                     </tr>
                     <tr v-if="groups.length === 0">
-                        <td colspan="7" class="px-4 py-6 text-center text-sm text-gray-500">No schedule groups yet.</td>
+                        <td colspan="10" class="px-4 py-6 text-center text-sm text-gray-500">No schedule groups yet.</td>
                     </tr>
                 </tbody>
             </table>

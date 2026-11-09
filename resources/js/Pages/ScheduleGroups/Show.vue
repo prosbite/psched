@@ -1,9 +1,10 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { Head, Link, router, useForm, usePage } from '@inertiajs/vue3';
 import AdminLayout from '@/Layouts/AdminLayout.vue';
 import FlashBanner from '@/Components/FlashBanner.vue';
 import Modal from '@/Components/Modal.vue';
+import TeacherDetailsModal from '@/Components/TeacherDetailsModal.vue';
 import InputLabel from '@/Components/InputLabel.vue';
 import InputError from '@/Components/InputError.vue';
 import TextInput from '@/Components/TextInput.vue';
@@ -17,6 +18,9 @@ const props = defineProps({
     allPresets: { type: Array, required: true },
     teachers: { type: Array, required: true },
     proctorLoads: { type: Object, default: () => ({}) },
+    subjectTeacherLoads: { type: Object, default: () => ({}) },
+    assignments: { type: Array, default: () => [] },
+    enrollments: { type: Array, default: () => [] },
 });
 
 const page = usePage();
@@ -25,15 +29,26 @@ const report = computed(() => page.props.flash?.generationReport ?? null);
 const isDraft = computed(() => props.group.status === 'draft');
 const isActive = computed(() => props.group.status === 'active');
 
+const subjectTeacherLoad = (teacher) => Number(props.subjectTeacherLoads?.[teacher?.id] ?? 0);
+const isSubjectTeacherExempt = (teacher) => subjectTeacherLoad(teacher) >= 2;
+
 const setupForm = useForm({
     time_preset_id: props.group.time_preset_id ?? '',
+    days: props.group.days ?? 3,
+    exams_per_day: props.group.exams_per_day ?? 3,
     sections: [],
     subjects: [],
 });
 
 onMounted(() => {
     setupForm.sections = (props.group.sections ?? []).map((section) => section.id);
-    setupForm.subjects = (props.group.subjects ?? []).map((subject) => subject.id);
+    setupForm.subjects = (props.group.subjects ?? [])
+        .slice()
+        .sort((a, b) => Number(a.pivot?.sort_order ?? 0) - Number(b.pivot?.sort_order ?? 0) || a.id - b.id)
+        .map((subject) => subject.id);
+    selectedProctors.value = props.teachers
+        .filter((teacher) => !isSubjectTeacherExempt(teacher))
+        .map((teacher) => teacher.id);
 });
 
 const saveSetup = () => {
@@ -49,50 +64,320 @@ const toggle = (list, id) => {
     }
 };
 
+const subjectGradeMap = computed(() => new Map(props.allSubjects.map((subject) => [subject.id, Number(subject.grade_level_id)])));
+
+const setupSubjectGrades = computed(() => {
+    const map = new Map();
+    const subjects = [...props.allSubjects].sort(
+        (a, b) =>
+            String(a.grade_level?.grade_level ?? '').localeCompare(String(b.grade_level?.grade_level ?? ''), undefined, { numeric: true }) ||
+            a.subject_name.localeCompare(b.subject_name),
+    );
+
+    for (const subject of subjects) {
+        const gradeId = Number(subject.grade_level_id);
+        if (!map.has(gradeId)) {
+            map.set(gradeId, { gradeId, label: subject.grade_level?.grade_level ?? '—', subjects: [] });
+        }
+        map.get(gradeId).subjects.push(subject);
+    }
+
+    return [...map.values()];
+});
+
+const setupOrderIndex = (subject) => {
+    const gradeId = Number(subject.grade_level_id);
+    const inGrade = setupForm.subjects.filter((id) => subjectGradeMap.value.get(id) === gradeId);
+    const index = inGrade.indexOf(subject.id);
+
+    return index === -1 ? null : index + 1;
+};
+
+const moveSubject = (id, direction) => {
+    const list = setupForm.subjects;
+    const index = list.indexOf(id);
+    if (index === -1) {
+        return;
+    }
+
+    const gradeId = subjectGradeMap.value.get(id);
+    let swapIndex = -1;
+
+    if (direction < 0) {
+        for (let i = index - 1; i >= 0; i--) {
+            if (subjectGradeMap.value.get(list[i]) === gradeId) {
+                swapIndex = i;
+                break;
+            }
+        }
+    } else {
+        for (let i = index + 1; i < list.length; i++) {
+            if (subjectGradeMap.value.get(list[i]) === gradeId) {
+                swapIndex = i;
+                break;
+            }
+        }
+    }
+
+    if (swapIndex === -1) {
+        return;
+    }
+
+    const swapped = list[index];
+    list[index] = list[swapIndex];
+    list[swapIndex] = swapped;
+};
+
 const action = (name, label, destructive = false) => {
     if (!destructive || confirm(`${label}?`)) {
         router.post(route(`schedule-groups.${name}`, props.group.id), {}, { preserveScroll: true });
     }
 };
 
-const shortTime = (time) => (time ? String(time).slice(0, 5) : '');
-const teacherName = (teacher) => (teacher ? [teacher.firstname, teacher.middlename, teacher.lastname].filter(Boolean).join(' ') : '—');
+const selectedProctors = ref([]);
 
-const sortedSchedules = computed(() =>
-    [...(props.group.schedules ?? [])].sort(
-        (a, b) => String(a.start_time).localeCompare(String(b.start_time)) || a.section_id - b.section_id,
-    ),
+const eligibleProctors = computed(() => props.teachers.filter((teacher) => !isSubjectTeacherExempt(teacher)));
+
+const allProctorsSelected = computed(
+    () =>
+        eligibleProctors.value.length > 0 &&
+        eligibleProctors.value.every((teacher) => selectedProctors.value.includes(teacher.id)),
+);
+const someProctorsSelected = computed(
+    () => selectedProctors.value.length > 0 && !allProctorsSelected.value,
 );
 
-const scheduleGroups = computed(() => {
-    const groups = [];
-    const index = new Map();
+const toggleProctor = (id) => {
+    const index = selectedProctors.value.indexOf(id);
+    if (index === -1) {
+        selectedProctors.value.push(id);
+    } else {
+        selectedProctors.value.splice(index, 1);
+    }
+};
 
-    for (const schedule of sortedSchedules.value) {
-        const key = `${schedule.start_time}-${schedule.end_time}`;
+const toggleAllProctors = () => {
+    selectedProctors.value = allProctorsSelected.value ? [] : eligibleProctors.value.map((teacher) => teacher.id);
+};
 
-        if (!index.has(key)) {
-            index.set(key, groups.length);
-            groups.push({
-                key,
-                label: `${shortTime(schedule.start_time)}–${shortTime(schedule.end_time)}`,
-                schedules: [],
-            });
-        }
-
-        groups[index.get(key)].schedules.push(schedule);
+const generate = () => {
+    if (selectedProctors.value.length === 0) {
+        return;
     }
 
-    return groups;
+    if (confirm('Regenerate the grid (this clears existing draft schedules)?')) {
+        router.post(
+            route('schedule-groups.generate', props.group.id),
+            { proctors: [...selectedProctors.value] },
+            { preserveScroll: true },
+        );
+    }
+};
+
+const shortTime = (time) => (time ? String(time).slice(0, 5) : '');
+const displayTime = (time) => {
+    if (!time) {
+        return '';
+    }
+
+    const [hours, minutes] = String(time).split(':');
+    const hour = Number(hours);
+    const period = hour >= 12 ? 'PM' : 'AM';
+    const displayHour = hour % 12 === 0 ? 12 : hour % 12;
+
+    return `${displayHour}:${minutes} ${period}`;
+};
+const teacherName = (teacher) => (teacher ? [teacher.firstname, teacher.middlename, teacher.lastname].filter(Boolean).join(' ') : '—');
+
+const detailsOpen = ref(false);
+const detailsTeacherId = ref(null);
+
+const openTeacher = (id) => {
+    if (!id) {
+        return;
+    }
+
+    detailsTeacherId.value = id;
+    detailsOpen.value = true;
+};
+
+const totalDays = computed(() => Math.max(1, Number(props.group.days) || 1));
+const activeDay = ref(1);
+
+watch(totalDays, (value) => {
+    if (activeDay.value > value) {
+        activeDay.value = 1;
+    }
 });
 
+const dayTabs = computed(() => Array.from({ length: totalDays.value }, (_, index) => index + 1));
+
+const hasSchedules = computed(() => (props.group.schedules ?? []).length > 0);
+
+const scheduleByKey = computed(() => {
+    const map = new Map();
+
+    for (const schedule of props.group.schedules ?? []) {
+        map.set(`${Number(schedule.day ?? 1)}-${schedule.section_id}-${schedule.subject_id}`, schedule);
+    }
+
+    return map;
+});
+
+const groupUnplaced = computed(() => props.group.unplaced ?? []);
+
+const unplacedByKey = computed(() => {
+    const map = new Map();
+
+    for (const item of groupUnplaced.value) {
+        map.set(`${Number(item.day ?? 1)}-${item.section_id}-${item.subject_id}`, item);
+    }
+
+    return map;
+});
+
+const enrollmentKeys = computed(
+    () => new Set(props.enrollments.map((pair) => `${pair.section_id}-${pair.subject_id}`)),
+);
+
+const sectionsByGrade = computed(() => {
+    const map = new Map();
+    const sections = [...(props.group.sections ?? [])].sort((a, b) => a.id - b.id);
+
+    for (const section of sections) {
+        const gradeId = Number(section.grade_level_id);
+        if (!map.has(gradeId)) {
+            map.set(gradeId, []);
+        }
+        map.get(gradeId).push(section);
+    }
+
+    return map;
+});
+
+const subjectsByGrade = computed(() => {
+    const map = new Map();
+    const subjects = [...(props.group.subjects ?? [])].sort(
+        (a, b) => Number(a.pivot?.sort_order ?? 0) - Number(b.pivot?.sort_order ?? 0) || a.id - b.id,
+    );
+
+    for (const subject of subjects) {
+        const gradeId = Number(subject.grade_level_id);
+        if (!map.has(gradeId)) {
+            map.set(gradeId, []);
+        }
+        map.get(gradeId).push(subject);
+    }
+
+    return map;
+});
+
+const timeSlotsForGrade = (gradeId) => {
+    const slots = props.group.time_preset?.slots ?? [];
+    const specific = slots
+        .filter((slot) => slot.grade_level_id !== null && Number(slot.grade_level_id) === Number(gradeId))
+        .sort((a, b) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0));
+
+    if (specific.length) {
+        return specific;
+    }
+
+    return slots
+        .filter((slot) => slot.grade_level_id === null)
+        .sort((a, b) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0));
+};
+
+const dayBlocks = computed(() => {
+    const day = Number(activeDay.value);
+    const examsPerDay = Math.max(1, Number(props.group.exams_per_day) || 3);
+    const blocks = [];
+    const gradeIds = [...sectionsByGrade.value.keys()].sort((a, b) => a - b);
+
+    for (const gradeId of gradeIds) {
+        const sections = sectionsByGrade.value.get(gradeId) ?? [];
+        if (sections.length === 0) {
+            continue;
+        }
+
+        const subjects = subjectsByGrade.value.get(gradeId) ?? [];
+        const slots = timeSlotsForGrade(gradeId);
+        const groups = [];
+
+        for (let period = 0; period < examsPerDay; period++) {
+            const subject = subjects[(day - 1) * examsPerDay + period];
+            if (!subject) {
+                continue;
+            }
+
+            const slot = slots[period];
+            const timeLabel = slot ? `${displayTime(slot.start_time)}–${displayTime(slot.end_time)}` : '';
+            const key = `${gradeId}-${period}`;
+
+            if (subject.is_elective) {
+                groups.push({ key, subject, timeLabel, elective: true, rows: [] });
+                continue;
+            }
+
+            const rows = sections
+                .filter(
+                    (section) =>
+                        enrollmentKeys.value.has(`${section.id}-${subject.id}`) ||
+                        scheduleByKey.value.has(`${day}-${section.id}-${subject.id}`),
+                )
+                .map((section) => ({
+                    section,
+                    schedule: scheduleByKey.value.get(`${day}-${section.id}-${subject.id}`) ?? null,
+                    unplaced: unplacedByKey.value.get(`${day}-${section.id}-${subject.id}`) ?? null,
+                }));
+
+            groups.push({ key, subject, timeLabel, elective: false, rows });
+        }
+
+        blocks.push({ gradeId, grade: sections[0].grade_level ?? null, groups });
+    }
+
+    return blocks;
+});
+
+const uniformTeacher = (group) => {
+    const rows = group.rows.filter((row) => row.schedule);
+    if (rows.length === 0) {
+        return null;
+    }
+
+    const first = rows[0].schedule;
+    const uniform = rows.every(
+        (row) => Number(row.schedule.subject_teacher_id ?? 0) === Number(first.subject_teacher_id ?? 0),
+    );
+
+    return uniform ? first.subject_teacher : null;
+};
+
 const scheduleForm = useForm({
+    day: 1,
     section_id: '',
     subject_id: '',
-    subject_teacher_id: '',
     proctor_id: '',
     start_time: '07:00',
     end_time: '08:00',
+});
+
+const assignmentLookup = computed(() => {
+    const map = new Map();
+
+    for (const assignment of props.assignments) {
+        map.set(`${assignment.section_id}-${assignment.subject_id}`, assignment.teacher);
+    }
+
+    return map;
+});
+
+const assignedTeacher = computed(() => {
+    if (!scheduleForm.section_id || !scheduleForm.subject_id) {
+        return null;
+    }
+
+    return assignmentLookup.value.get(`${scheduleForm.section_id}-${scheduleForm.subject_id}`) ?? null;
 });
 
 const showScheduleModal = ref(false);
@@ -111,6 +396,7 @@ const openAddSchedule = () => {
     editingSchedule.value = null;
     scheduleForm.reset();
     scheduleForm.clearErrors();
+    scheduleForm.day = activeDay.value;
     scheduleForm.start_time = '07:00';
     scheduleForm.end_time = '08:00';
     showScheduleModal.value = true;
@@ -118,9 +404,9 @@ const openAddSchedule = () => {
 
 const openEditSchedule = (schedule) => {
     editingSchedule.value = schedule;
+    scheduleForm.day = Number(schedule.day ?? 1);
     scheduleForm.section_id = schedule.section_id;
     scheduleForm.subject_id = schedule.subject_id;
-    scheduleForm.subject_teacher_id = schedule.subject_teacher_id;
     scheduleForm.proctor_id = schedule.proctor_id;
     scheduleForm.start_time = shortTime(schedule.start_time);
     scheduleForm.end_time = shortTime(schedule.end_time);
@@ -147,6 +433,60 @@ const removeSchedule = (schedule) => {
         router.delete(route('schedule-groups.schedules.destroy', [props.group.id, schedule.id]), { preserveScroll: true });
     }
 };
+
+const openAddScheduleFor = (item) => {
+    editingSchedule.value = null;
+    scheduleForm.reset();
+    scheduleForm.clearErrors();
+    scheduleForm.day = Number(item.day ?? 1);
+    scheduleForm.section_id = item.section_id;
+    scheduleForm.subject_id = item.subject_id;
+    scheduleForm.start_time = shortTime(item.start_time) || '07:00';
+    scheduleForm.end_time = shortTime(item.end_time) || '08:00';
+    showScheduleModal.value = true;
+};
+
+const assignModalOpen = ref(false);
+const assignUnplaced = ref(null);
+const assignmentValues = ref({});
+
+const assignSubjects = computed(() => {
+    if (!assignUnplaced.value) {
+        return [];
+    }
+
+    const gradeId = Number(assignUnplaced.value.section?.grade_level_id);
+
+    return (props.group.subjects ?? []).filter((subject) => Number(subject.grade_level_id) === gradeId);
+});
+
+const openAssignFor = (item) => {
+    assignUnplaced.value = item;
+
+    const values = {};
+
+    for (const assignment of props.assignments) {
+        if (assignment.section_id === item.section_id) {
+            values[assignment.subject_id] = assignment.teacher?.id ?? '';
+        }
+    }
+
+    assignmentValues.value = values;
+    assignModalOpen.value = true;
+};
+
+const saveAssignments = () => {
+    const payload = assignSubjects.value.map((subject) => ({
+        subject_id: subject.id,
+        teacher_id: assignmentValues.value[subject.id] ?? '',
+    }));
+
+    router.put(
+        route('sections.assignments.update', assignUnplaced.value.section_id),
+        { assignments: payload },
+        { preserveScroll: true, onSuccess: () => (assignModalOpen.value = false) },
+    );
+};
 </script>
 
 <template>
@@ -166,16 +506,23 @@ const removeSchedule = (schedule) => {
             >
                 {{ group.status }}
             </span>
+            <span v-if="group.school_year" class="text-sm text-gray-600">
+                School Year: {{ group.school_year.name }}
+            </span>
+            <span v-if="group.quarter" class="text-sm text-gray-600">
+                Quarter: {{ group.quarter.name }}
+            </span>
             <span v-if="group.time_preset" class="text-sm text-gray-600">
                 Preset: {{ group.time_preset.name }} ({{ group.time_preset.slots?.length ?? 0 }} slots)
             </span>
+            <span class="text-sm text-gray-600">{{ group.days }} day(s) × {{ group.exams_per_day }} exams/day</span>
             <span class="text-sm text-gray-600">Max proctorships/teacher: {{ group.max_proctors_per_teacher }}</span>
 
             <div class="ms-auto flex flex-wrap gap-2">
                 <Link :href="route('schedule-groups.edit', group.id)">
                     <SecondaryButton type="button">Edit Group</SecondaryButton>
                 </Link>
-                <PrimaryButton v-if="isDraft" type="button" @click="action('generate', 'Regenerate the grid (this clears existing draft schedules)', true)">
+                <PrimaryButton v-if="isDraft" type="button" :disabled="selectedProctors.length === 0" @click="generate">
                     Generate
                 </PrimaryButton>
                 <PrimaryButton v-if="isDraft" type="button" @click="action('finalize', 'Finalize and publish this schedule group')">
@@ -192,14 +539,63 @@ const removeSchedule = (schedule) => {
             <p class="mt-1 text-sm text-gray-600">
                 Placed {{ report.placed.length }} schedule(s); {{ report.unplaced.length }} could not be placed.
             </p>
-            <ul v-if="report.unplaced.length" class="mt-2 list-disc space-y-1 ps-5 text-sm text-red-700">
-                <li v-for="(item, index) in report.unplaced" :key="index">
-                    {{ item.section_name }} — {{ item.subject_name }}: {{ item.reason }}
-                </li>
-            </ul>
             <ul v-if="report.warnings?.length" class="mt-2 list-disc space-y-1 ps-5 text-sm text-amber-700">
                 <li v-for="(warning, index) in report.warnings" :key="index">{{ warning }}</li>
             </ul>
+        </div>
+
+        <!-- Needs attention (persisted unplaced exams) -->
+        <div v-if="groupUnplaced.length" class="mb-4 rounded-lg border border-red-200 bg-white p-4 shadow">
+            <h3 class="text-sm font-semibold text-red-700">Needs attention ({{ groupUnplaced.length }})</h3>
+            <p class="mt-1 text-sm text-gray-600">
+                These exams could not be placed. Fix the cause, then regenerate or add them manually.
+            </p>
+            <div class="mt-3 overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200 text-sm">
+                    <thead>
+                        <tr>
+                            <th class="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Day</th>
+                            <th class="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Grade / Section</th>
+                            <th class="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Subject</th>
+                            <th class="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Reason</th>
+                            <th v-if="isDraft" class="px-3 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-200">
+                        <tr v-for="item in groupUnplaced" :key="item.id">
+                            <td class="whitespace-nowrap px-3 py-2 text-gray-700">Day {{ item.day }}</td>
+                            <td class="px-3 py-2 text-gray-700">
+                                {{ item.section?.grade_level?.grade_level ?? '—' }} / {{ item.section?.section_name ?? '—' }}
+                            </td>
+                            <td class="px-3 py-2 text-gray-700">{{ item.subject?.subject_name ?? '—' }}</td>
+                            <td class="px-3 py-2 text-red-700">{{ item.reason }}</td>
+                            <td v-if="isDraft" class="whitespace-nowrap px-3 py-2 text-right">
+                                <button
+                                    v-if="item.reason_code === 'missing_teacher'"
+                                    class="text-indigo-600 hover:text-indigo-900"
+                                    @click="openAssignFor(item)"
+                                >
+                                    Assign teacher
+                                </button>
+                                <button
+                                    class="text-indigo-600 hover:text-indigo-900"
+                                    :class="{ 'ms-3': item.reason_code === 'missing_teacher' }"
+                                    @click="openAddScheduleFor(item)"
+                                >
+                                    Add schedule
+                                </button>
+                                <Link
+                                    v-if="item.reason_code === 'missing_slot' && group.time_preset_id"
+                                    :href="route('time-presets.edit', group.time_preset_id)"
+                                    class="ms-3 text-indigo-600 hover:text-indigo-900"
+                                >
+                                    Fix time preset
+                                </Link>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
         </div>
 
         <div class="grid grid-cols-1 gap-6 xl:grid-cols-3">
@@ -207,23 +603,51 @@ const removeSchedule = (schedule) => {
             <div class="rounded-lg bg-white p-6 shadow xl:col-span-1">
                 <h3 class="text-base font-semibold text-gray-800">Setup</h3>
                 <p class="mt-1 text-sm text-gray-500">
-                    Choose the preset day, the sections, and the subjects to schedule.
+                    Choose the preset, the exam length, the sections, and the ordered subjects per grade.
                 </p>
 
-                <div class="mt-4">
-                    <InputLabel for="setup_preset" value="Time Preset" />
-                    <select
-                        id="setup_preset"
-                        v-model="setupForm.time_preset_id"
-                        :disabled="!isDraft"
-                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:bg-gray-100"
-                    >
-                        <option value="">No preset</option>
-                        <option v-for="preset in allPresets" :key="preset.id" :value="preset.id">
-                            {{ preset.name }} ({{ preset.slots_count }} slots)
-                        </option>
-                    </select>
-                    <InputError class="mt-2" :message="setupForm.errors.time_preset_id" />
+                <div class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
+                    <div class="sm:col-span-3">
+                        <InputLabel for="setup_preset" value="Time Preset" />
+                        <select
+                            id="setup_preset"
+                            v-model="setupForm.time_preset_id"
+                            :disabled="!isDraft"
+                            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:bg-gray-100"
+                        >
+                            <option value="">No preset</option>
+                            <option v-for="preset in allPresets" :key="preset.id" :value="preset.id">
+                                {{ preset.name }} ({{ preset.slots_count }} slots)
+                            </option>
+                        </select>
+                        <InputError class="mt-2" :message="setupForm.errors.time_preset_id" />
+                    </div>
+                    <div>
+                        <InputLabel for="setup_days" value="Days" />
+                        <TextInput
+                            id="setup_days"
+                            v-model="setupForm.days"
+                            type="number"
+                            min="1"
+                            max="3"
+                            :disabled="!isDraft"
+                            class="mt-1 block w-full disabled:bg-gray-100"
+                        />
+                        <InputError class="mt-2" :message="setupForm.errors.days" />
+                    </div>
+                    <div class="sm:col-span-2">
+                        <InputLabel for="setup_epd" value="Exams per day" />
+                        <TextInput
+                            id="setup_epd"
+                            v-model="setupForm.exams_per_day"
+                            type="number"
+                            min="1"
+                            max="10"
+                            :disabled="!isDraft"
+                            class="mt-1 block w-full disabled:bg-gray-100"
+                        />
+                        <InputError class="mt-2" :message="setupForm.errors.exams_per_day" />
+                    </div>
                 </div>
 
                 <div class="mt-4">
@@ -244,19 +668,55 @@ const removeSchedule = (schedule) => {
                 </div>
 
                 <div class="mt-4">
-                    <InputLabel value="Subjects" />
-                    <div class="mt-2 max-h-48 space-y-1 overflow-y-auto rounded-md border border-gray-200 p-3">
-                        <label v-for="subject in allSubjects" :key="subject.id" class="flex items-center gap-2 text-sm text-gray-700">
-                            <input
-                                type="checkbox"
-                                class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                                :disabled="!isDraft"
-                                :checked="setupForm.subjects.includes(subject.id)"
-                                @change="toggle(setupForm.subjects, subject.id)"
-                            />
-                            {{ subject.subject_name }}
-                            <span class="text-xs text-gray-400">{{ subject.grade_level?.grade_level }}</span>
-                        </label>
+                    <InputLabel value="Subjects (ordered per grade)" />
+                    <p class="mt-1 text-xs text-gray-500">
+                        The order defines the day/period: the first subjects fill day 1, up to
+                        {{ group.exams_per_day }} exams per day.
+                    </p>
+                    <div class="mt-2 max-h-72 space-y-3 overflow-y-auto rounded-md border border-gray-200 p-3">
+                        <div v-for="gradeGroup in setupSubjectGrades" :key="gradeGroup.gradeId">
+                            <p class="text-xs font-semibold uppercase tracking-wide text-gray-400">
+                                Grade {{ gradeGroup.label }}
+                            </p>
+                            <div class="mt-1 space-y-1">
+                                <div
+                                    v-for="subject in gradeGroup.subjects"
+                                    :key="subject.id"
+                                    class="flex items-center justify-between gap-2 rounded px-1 py-0.5 text-sm text-gray-700"
+                                >
+                                    <label class="flex items-center gap-2">
+                                        <input
+                                            type="checkbox"
+                                            class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                            :disabled="!isDraft"
+                                            :checked="setupForm.subjects.includes(subject.id)"
+                                            @change="toggle(setupForm.subjects, subject.id)"
+                                        />
+                                        {{ subject.subject_name }}
+                                        <span v-if="subject.is_elective" class="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800">Elective</span>
+                                    </label>
+                                    <span v-if="setupOrderIndex(subject)" class="flex items-center gap-1 text-xs text-gray-400">
+                                        #{{ setupOrderIndex(subject) }}
+                                        <button
+                                            type="button"
+                                            class="rounded border border-gray-300 px-1 leading-none hover:bg-gray-50 disabled:opacity-30"
+                                            :disabled="!isDraft"
+                                            @click="moveSubject(subject.id, -1)"
+                                        >
+                                            ↑
+                                        </button>
+                                        <button
+                                            type="button"
+                                            class="rounded border border-gray-300 px-1 leading-none hover:bg-gray-50 disabled:opacity-30"
+                                            :disabled="!isDraft"
+                                            @click="moveSubject(subject.id, 1)"
+                                        >
+                                            ↓
+                                        </button>
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -267,72 +727,204 @@ const removeSchedule = (schedule) => {
 
             <!-- Teacher load -->
             <div class="rounded-lg bg-white p-6 shadow xl:col-span-2">
-                <h3 class="text-base font-semibold text-gray-800">Teacher proctor load</h3>
-                <p class="mt-1 text-sm text-gray-500">
-                    Proctorship count per teacher against the cap of {{ group.max_proctors_per_teacher }}.
-                </p>
+                <div class="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                        <h3 class="text-base font-semibold text-gray-800">Teacher load</h3>
+                        <p class="mt-1 text-sm text-gray-500">
+                            Proctorship count per teacher against the per-day cap of {{ group.max_proctors_per_teacher }}, plus the number of subjects each teacher handles. Teachers with two or more subjects are exempt from proctoring. Unchecked teachers never proctor a generated grid.
+                        </p>
+                    </div>
+                    <label class="flex shrink-0 items-center gap-2 text-sm text-gray-700">
+                        <input
+                            type="checkbox"
+                            class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                            :checked="allProctorsSelected"
+                            :indeterminate="someProctorsSelected"
+                            @change="toggleAllProctors"
+                        />
+                        Select all
+                    </label>
+                </div>
                 <div class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                    <div
+                    <label
                         v-for="teacher in teachers"
                         :key="teacher.id"
                         class="flex items-center justify-between rounded-md border border-gray-200 px-3 py-2 text-sm"
                     >
-                        <span class="text-gray-700">{{ teacherName(teacher) }}</span>
-                        <span
-                            class="font-medium"
-                            :class="(proctorLoads[teacher.id] ?? 0) >= group.max_proctors_per_teacher ? 'text-red-600' : 'text-gray-600'"
-                        >
-                            {{ proctorLoads[teacher.id] ?? 0 }}/{{ group.max_proctors_per_teacher }}
+                        <span class="flex items-center gap-2">
+                            <input
+                                type="checkbox"
+                                class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 disabled:opacity-40"
+                                :checked="selectedProctors.includes(teacher.id)"
+                                :disabled="isSubjectTeacherExempt(teacher)"
+                                :title="isSubjectTeacherExempt(teacher) ? 'Exempt: handles two or more subjects' : ''"
+                                @change="toggleProctor(teacher.id)"
+                            />
+                            <span class="text-gray-700">
+                                <button
+                                    type="button"
+                                    class="text-indigo-600 hover:text-indigo-900"
+                                    @click.stop.prevent="openTeacher(teacher.id)"
+                                >
+                                    {{ teacherName(teacher) }}
+                                </button>
+                            </span>
                         </span>
-                    </div>
+                        <span class="flex flex-col items-end text-right">
+                            <span
+                                class="font-medium"
+                                :class="(proctorLoads[teacher.id] ?? 0) >= group.max_proctors_per_teacher ? 'text-red-600' : 'text-gray-600'"
+                            >
+                                {{ proctorLoads[teacher.id] ?? 0 }}/{{ group.max_proctors_per_teacher }} proctor
+                            </span>
+                            <span class="text-xs text-gray-500">
+                                {{ subjectTeacherLoad(teacher) }} subject{{ subjectTeacherLoad(teacher) === 1 ? '' : 's' }}
+                            </span>
+                            <span
+                                v-if="isSubjectTeacherExempt(teacher)"
+                                class="mt-1 rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800"
+                            >
+                                Exempt from proctoring
+                            </span>
+                        </span>
+                    </label>
                 </div>
             </div>
         </div>
 
         <!-- Schedule grid -->
         <div class="mt-6 rounded-lg bg-white shadow">
-            <div class="flex items-center justify-between border-b border-gray-200 px-6 py-4">
+            <div class="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 px-6 py-4">
                 <h3 class="text-base font-semibold text-gray-800">Schedule grid</h3>
-                <PrimaryButton v-if="isDraft" type="button" @click="openAddSchedule">Add Schedule</PrimaryButton>
+                <div class="flex items-center gap-2">
+                    <button
+                        v-for="day in dayTabs"
+                        :key="day"
+                        type="button"
+                        class="rounded-md px-3 py-1.5 text-sm font-medium"
+                        :class="activeDay === day ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'"
+                        @click="activeDay = day"
+                    >
+                        Day {{ day }}
+                    </button>
+                    <PrimaryButton v-if="isDraft" type="button" @click="openAddSchedule">Add Schedule</PrimaryButton>
+                </div>
             </div>
+
+            <p v-if="!hasSchedules" class="border-b border-gray-100 px-6 py-3 text-sm text-gray-500">
+                No schedules generated yet. Configure the setup and generate, or add one manually.
+            </p>
+
             <div class="overflow-x-auto">
                 <table class="min-w-full divide-y divide-gray-200">
                     <thead class="bg-gray-50">
                         <tr>
                             <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Time</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Section</th>
                             <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Subject</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Section</th>
                             <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Subject Teacher</th>
                             <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Proctor</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Room</th>
                             <th v-if="isDraft" class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Actions</th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-200">
-                        <template v-for="group in scheduleGroups" :key="group.key">
-                            <tr v-for="(schedule, rowIndex) in group.schedules" :key="schedule.id">
-                                <td
-                                    v-if="rowIndex === 0"
-                                    :rowspan="group.schedules.length"
-                                    class="whitespace-nowrap border-r border-gray-100 px-4 py-3 align-top text-sm font-medium text-gray-900"
-                                >
-                                    {{ group.label }}
-                                </td>
-                                <td class="px-4 py-3 text-sm text-gray-700">
-                                    {{ schedule.section?.section_name }}
-                                    <span v-if="schedule.section?.room" class="text-xs text-gray-400">({{ schedule.section.room.room_name }})</span>
-                                </td>
-                                <td class="px-4 py-3 text-sm text-gray-700">{{ schedule.subject?.subject_name }}</td>
-                                <td class="px-4 py-3 text-sm text-gray-700">{{ teacherName(schedule.subject_teacher) }}</td>
-                                <td class="px-4 py-3 text-sm text-gray-700">{{ teacherName(schedule.proctor) }}</td>
-                                <td v-if="isDraft" class="whitespace-nowrap px-4 py-3 text-right text-sm">
-                                    <button class="text-indigo-600 hover:text-indigo-900" @click="openEditSchedule(schedule)">Edit</button>
-                                    <button class="ms-3 text-red-600 hover:text-red-900" @click="removeSchedule(schedule)">Remove</button>
+                        <template v-for="block in dayBlocks" :key="`grade-${block.gradeId}`">
+                            <tr class="bg-gray-100">
+                                <td :colspan="isDraft ? 7 : 6" class="px-4 py-2 text-xs font-semibold uppercase tracking-wide text-gray-600">
+                                    Grade {{ block.grade?.grade_level ?? block.gradeId }}
                                 </td>
                             </tr>
+                            <template v-for="group in block.groups" :key="group.key">
+                                <tr v-if="group.elective">
+                                    <td class="whitespace-nowrap border-r border-gray-100 px-4 py-3 align-top text-sm font-medium text-gray-900">
+                                        {{ group.timeLabel || '—' }}
+                                    </td>
+                                    <td class="px-4 py-3 text-sm text-gray-700">
+                                        {{ group.subject.subject_name }}
+                                        <span class="ms-1 rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800">Elective</span>
+                                    </td>
+                                    <td class="px-4 py-3 text-sm text-gray-700">NA</td>
+                                    <td class="px-4 py-3 text-sm text-gray-700">Subject Teachers</td>
+                                    <td class="px-4 py-3 text-sm text-gray-700">Subject Teachers</td>
+                                    <td class="px-4 py-3 text-sm text-gray-700">Classroom Assignment</td>
+                                    <td v-if="isDraft"></td>
+                                </tr>
+                                <template v-else>
+                                    <tr v-for="(row, rowIndex) in group.rows" :key="`${group.key}-${row.section.id}`">
+                                        <td
+                                            v-if="rowIndex === 0"
+                                            :rowspan="group.rows.length"
+                                            class="whitespace-nowrap border-r border-gray-100 px-4 py-3 align-top text-sm font-medium text-gray-900"
+                                        >
+                                            {{ group.timeLabel || '—' }}
+                                        </td>
+                                        <td
+                                            v-if="rowIndex === 0"
+                                            :rowspan="group.rows.length"
+                                            class="border-r border-gray-100 px-4 py-3 align-top text-sm text-gray-700"
+                                        >
+                                            {{ group.subject.subject_name }}
+                                        </td>
+                                        <td class="px-4 py-3 text-sm text-gray-700">
+                                            {{ row.section.section_name }}
+                                            <span
+                                                v-if="row.unplaced"
+                                                class="ms-1 rounded bg-red-100 px-1.5 py-0.5 text-xs text-red-700"
+                                                :title="row.unplaced.reason"
+                                            >
+                                                Unplaced
+                                            </span>
+                                        </td>
+                                        <td
+                                            v-if="rowIndex === 0 && uniformTeacher(group)"
+                                            :rowspan="group.rows.length"
+                                            class="border-r border-gray-100 px-4 py-3 align-top text-sm text-gray-700"
+                                        >
+                                            <button
+                                                v-if="uniformTeacher(group)?.id"
+                                                class="text-indigo-600 hover:text-indigo-900"
+                                                @click="openTeacher(uniformTeacher(group).id)"
+                                            >
+                                                {{ teacherName(uniformTeacher(group)) }}
+                                            </button>
+                                            <span v-else>—</span>
+                                        </td>
+                                        <td v-else-if="!uniformTeacher(group)" class="px-4 py-3 text-sm text-gray-700">
+                                            <button
+                                                v-if="row.schedule?.subject_teacher_id"
+                                                class="text-indigo-600 hover:text-indigo-900"
+                                                @click="openTeacher(row.schedule.subject_teacher_id)"
+                                            >
+                                                {{ teacherName(row.schedule.subject_teacher) }}
+                                            </button>
+                                            <span v-else>—</span>
+                                        </td>
+                                        <td class="px-4 py-3 text-sm text-gray-700">
+                                            <button
+                                                v-if="row.schedule?.proctor_id"
+                                                class="text-indigo-600 hover:text-indigo-900"
+                                                @click="openTeacher(row.schedule.proctor_id)"
+                                            >
+                                                {{ teacherName(row.schedule.proctor) }}
+                                            </button>
+                                            <span v-else>—</span>
+                                        </td>
+                                        <td class="px-4 py-3 text-sm text-gray-700">{{ row.section.room?.room_name ?? '—' }}</td>
+                                        <td v-if="isDraft" class="whitespace-nowrap px-4 py-3 text-right text-sm">
+                                            <template v-if="row.schedule">
+                                                <button class="text-indigo-600 hover:text-indigo-900" @click="openEditSchedule(row.schedule)">Edit</button>
+                                                <button class="ms-3 text-red-600 hover:text-red-900" @click="removeSchedule(row.schedule)">Remove</button>
+                                            </template>
+                                            <span v-else>—</span>
+                                        </td>
+                                    </tr>
+                                </template>
+                            </template>
                         </template>
-                        <tr v-if="sortedSchedules.length === 0">
-                            <td :colspan="isDraft ? 6 : 5" class="px-4 py-6 text-center text-sm text-gray-500">
-                                No schedules yet. Configure the setup and generate, or add one manually.
+                        <tr v-if="dayBlocks.length === 0">
+                            <td :colspan="isDraft ? 7 : 6" class="px-4 py-6 text-center text-sm text-gray-500">
+                                No sections or subjects are configured for this group yet.
                             </td>
                         </tr>
                     </tbody>
@@ -347,6 +939,17 @@ const removeSchedule = (schedule) => {
                 </h2>
 
                 <div class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div>
+                        <InputLabel for="schedule_day" value="Day" />
+                        <select
+                            id="schedule_day"
+                            v-model="scheduleForm.day"
+                            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                        >
+                            <option v-for="day in dayTabs" :key="day" :value="day">Day {{ day }}</option>
+                        </select>
+                        <InputError class="mt-2" :message="scheduleForm.errors.day" />
+                    </div>
                     <div>
                         <InputLabel for="schedule_section" value="Section" />
                         <select
@@ -376,16 +979,18 @@ const removeSchedule = (schedule) => {
                         <InputError class="mt-2" :message="scheduleForm.errors.subject_id" />
                     </div>
                     <div>
-                        <InputLabel for="schedule_teacher" value="Subject Teacher" />
-                        <select
-                            id="schedule_teacher"
-                            v-model="scheduleForm.subject_teacher_id"
-                            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                        <InputLabel value="Subject Teacher" />
+                        <div class="mt-1 block w-full rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm">
+                            <span v-if="assignedTeacher" class="text-gray-700">{{ teacherName(assignedTeacher) }}</span>
+                            <span v-else class="text-gray-400">No teacher assigned</span>
+                        </div>
+                        <p
+                            v-if="scheduleForm.section_id && scheduleForm.subject_id && !assignedTeacher"
+                            class="mt-1 text-xs text-red-600"
                         >
-                            <option value="" disabled>Select a teacher</option>
-                            <option v-for="teacher in teachers" :key="teacher.id" :value="teacher.id">{{ teacherName(teacher) }}</option>
-                        </select>
-                        <InputError class="mt-2" :message="scheduleForm.errors.subject_teacher_id" />
+                            No teacher is assigned to this subject for the section.
+                        </p>
+                        <InputError class="mt-2" :message="scheduleForm.errors.subject_id" />
                     </div>
                     <div>
                         <InputLabel for="schedule_proctor" value="Proctor" />
@@ -413,9 +1018,53 @@ const removeSchedule = (schedule) => {
 
                 <div class="mt-6 flex justify-end gap-3">
                     <SecondaryButton type="button" @click="showScheduleModal = false">Cancel</SecondaryButton>
-                    <PrimaryButton :disabled="scheduleForm.processing">Save</PrimaryButton>
+                    <PrimaryButton :disabled="scheduleForm.processing || !assignedTeacher">Save</PrimaryButton>
                 </div>
             </form>
         </Modal>
+
+        <Modal :show="assignModalOpen" @close="assignModalOpen = false" max-width="xl">
+            <form class="p-6" @submit.prevent="saveAssignments">
+                <h2 class="text-lg font-medium text-gray-900">
+                    Assign Teachers — {{ assignUnplaced?.section?.section_name }}
+                </h2>
+                <p class="mt-1 text-sm text-gray-500">
+                    Choose the teacher assigned to each subject for this section. Leave blank if unassigned.
+                </p>
+
+                <div class="mt-4 max-h-96 space-y-3 overflow-y-auto">
+                    <div
+                        v-for="subject in assignSubjects"
+                        :key="subject.id"
+                        class="grid grid-cols-1 items-center gap-2 sm:grid-cols-2"
+                    >
+                        <span class="text-sm text-gray-700">{{ subject.subject_name }}</span>
+                        <select
+                            v-model="assignmentValues[subject.id]"
+                            class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                        >
+                            <option value="">No teacher</option>
+                            <option v-for="teacher in teachers" :key="teacher.id" :value="teacher.id">
+                                {{ teacherName(teacher) }}
+                            </option>
+                        </select>
+                    </div>
+                    <p v-if="assignSubjects.length === 0" class="text-sm text-gray-500">
+                        No subjects are defined for this grade level yet.
+                    </p>
+                </div>
+
+                <div class="mt-6 flex justify-end gap-3">
+                    <SecondaryButton type="button" @click="assignModalOpen = false">Cancel</SecondaryButton>
+                    <PrimaryButton>Save Assignments</PrimaryButton>
+                </div>
+            </form>
+        </Modal>
+
+        <TeacherDetailsModal
+            :show="detailsOpen"
+            :teacher-id="detailsTeacherId"
+            @close="detailsOpen = false"
+        />
     </AdminLayout>
 </template>

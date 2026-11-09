@@ -5,6 +5,7 @@ namespace App\Http\Requests;
 use App\Enums\ScheduleGroupStatus;
 use App\Models\Schedule;
 use App\Models\ScheduleGroup;
+use App\Models\SectionSubjectTeacher;
 use App\Services\ConflictChecker;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
@@ -32,9 +33,9 @@ class ScheduleRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'day' => ['required', 'integer', 'min:1'],
             'section_id' => ['required', 'integer', Rule::exists('sections', 'id')],
             'subject_id' => ['required', 'integer', Rule::exists('subjects', 'id')],
-            'subject_teacher_id' => ['required', 'integer', Rule::exists('teachers', 'id')],
             'proctor_id' => ['required', 'integer', Rule::exists('teachers', 'id')],
             'start_time' => ['required', 'date_format:H:i'],
             'end_time' => ['required', 'date_format:H:i'],
@@ -76,8 +77,9 @@ class ScheduleRequest extends FormRequest
                 ->all();
 
             $candidate = [
+                'day' => (int) $this->input('day'),
                 'section_id' => (int) $this->input('section_id'),
-                'subject_teacher_id' => (int) $this->input('subject_teacher_id'),
+                'subject_teacher_id' => (int) $this->resolveSubjectTeacherId(),
                 'proctor_id' => (int) $this->input('proctor_id'),
                 'start_time' => (string) $this->input('start_time'),
                 'end_time' => (string) $this->input('end_time'),
@@ -117,7 +119,27 @@ class ScheduleRequest extends FormRequest
 
         if (! $subjectBelongs) {
             $validator->errors()->add('subject_id', 'The subject is not part of this schedule group for the section grade level.');
+
+            return;
         }
+
+        if ($this->resolveSubjectTeacherId() === null) {
+            $validator->errors()->add('subject_id', 'No teacher is assigned to this subject for the section.');
+        }
+    }
+
+    /**
+     * Resolve the subject teacher for the requested section/subject mapping.
+     */
+    private function resolveSubjectTeacherId(): ?int
+    {
+        $teacherId = SectionSubjectTeacher::query()
+            ->where('section_id', $this->input('section_id'))
+            ->where('subject_id', $this->input('subject_id'))
+            ->whereNotNull('teacher_id')
+            ->value('teacher_id');
+
+        return $teacherId === null ? null : (int) $teacherId;
     }
 
     /**

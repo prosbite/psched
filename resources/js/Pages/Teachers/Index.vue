@@ -4,6 +4,7 @@ import { Head, useForm } from '@inertiajs/vue3';
 import AdminLayout from '@/Layouts/AdminLayout.vue';
 import FlashBanner from '@/Components/FlashBanner.vue';
 import Modal from '@/Components/Modal.vue';
+import TeacherDetailsModal from '@/Components/TeacherDetailsModal.vue';
 import InputLabel from '@/Components/InputLabel.vue';
 import InputError from '@/Components/InputError.vue';
 import TextInput from '@/Components/TextInput.vue';
@@ -12,17 +13,17 @@ import SecondaryButton from '@/Components/SecondaryButton.vue';
 
 defineProps({
     teachers: { type: Array, required: true },
-    subjects: { type: Array, required: true },
 });
 
 const showModal = ref(false);
 const editing = ref(null);
+const detailsOpen = ref(false);
+const detailsTeacherId = ref(null);
 const form = useForm({
     firstname: '',
     middlename: '',
     lastname: '',
     email: '',
-    subjects: [],
 });
 
 const fullName = (teacher) => [teacher.firstname, teacher.middlename, teacher.lastname].filter(Boolean).join(' ');
@@ -31,7 +32,6 @@ const openCreate = () => {
     editing.value = null;
     form.reset();
     form.clearErrors();
-    form.subjects = [];
     showModal.value = true;
 };
 
@@ -41,7 +41,6 @@ const openEdit = (teacher) => {
     form.middlename = teacher.middlename ?? '';
     form.lastname = teacher.lastname;
     form.email = teacher.email ?? '';
-    form.subjects = (teacher.subjects ?? []).map((subject) => subject.id);
     form.clearErrors();
     showModal.value = true;
 };
@@ -60,13 +59,9 @@ const destroy = (teacher) => {
     }
 };
 
-const toggleSubject = (subjectId) => {
-    const index = form.subjects.indexOf(subjectId);
-    if (index === -1) {
-        form.subjects.push(subjectId);
-    } else {
-        form.subjects.splice(index, 1);
-    }
+const openDetails = (teacher) => {
+    detailsTeacherId.value = teacher.id;
+    detailsOpen.value = true;
 };
 </script>
 
@@ -77,7 +72,7 @@ const toggleSubject = (subjectId) => {
         <FlashBanner />
 
         <div class="mb-4 flex items-center justify-between">
-            <p class="text-sm text-gray-600">Qualified subjects drive which teachers can be assigned to an exam.</p>
+            <p class="text-sm text-gray-600">Teaching assignments are managed per section and subject on the Sections page.</p>
             <PrimaryButton @click="openCreate">Add Teacher</PrimaryButton>
         </div>
 
@@ -87,31 +82,24 @@ const toggleSubject = (subjectId) => {
                     <tr>
                         <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Name</th>
                         <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Email</th>
-                        <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Subjects</th>
                         <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Actions</th>
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-gray-200">
                     <tr v-for="teacher in teachers" :key="teacher.id">
-                        <td class="px-4 py-3 text-sm text-gray-900">{{ fullName(teacher) }}</td>
-                        <td class="px-4 py-3 text-sm text-gray-600">{{ teacher.email ?? '—' }}</td>
-                        <td class="px-4 py-3 text-sm text-gray-600">
-                            <span
-                                v-for="subject in teacher.subjects"
-                                :key="subject.id"
-                                class="me-1 mb-1 inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-700"
-                            >
-                                {{ subject.subject_name }}
-                            </span>
-                            <span v-if="!teacher.subjects?.length" class="text-gray-400">None</span>
+                        <td class="px-4 py-3 text-sm text-gray-900">
+                            <button class="text-indigo-600 hover:text-indigo-900" @click="openDetails(teacher)">
+                                {{ fullName(teacher) }}
+                            </button>
                         </td>
+                        <td class="px-4 py-3 text-sm text-gray-600">{{ teacher.email ?? '—' }}</td>
                         <td class="whitespace-nowrap px-4 py-3 text-right text-sm">
                             <button class="text-indigo-600 hover:text-indigo-900" @click="openEdit(teacher)">Edit</button>
                             <button class="ms-3 text-red-600 hover:text-red-900" @click="destroy(teacher)">Delete</button>
                         </td>
                     </tr>
                     <tr v-if="teachers.length === 0">
-                        <td colspan="4" class="px-4 py-6 text-center text-sm text-gray-500">No teachers yet.</td>
+                        <td colspan="3" class="px-4 py-6 text-center text-sm text-gray-500">No teachers yet.</td>
                     </tr>
                 </tbody>
             </table>
@@ -147,32 +135,17 @@ const toggleSubject = (subjectId) => {
                     <InputError class="mt-2" :message="form.errors.email" />
                 </div>
 
-                <div class="mt-4">
-                    <InputLabel value="Qualified Subjects" />
-                    <div class="mt-2 grid max-h-56 grid-cols-1 gap-2 overflow-y-auto rounded-md border border-gray-200 p-3 sm:grid-cols-2">
-                        <label
-                            v-for="subject in subjects"
-                            :key="subject.id"
-                            class="flex items-center gap-2 text-sm text-gray-700"
-                        >
-                            <input
-                                type="checkbox"
-                                class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                                :checked="form.subjects.includes(subject.id)"
-                                @change="toggleSubject(subject.id)"
-                            />
-                            {{ subject.subject_name }}
-                            <span class="text-xs text-gray-400">{{ subject.grade_level?.grade_level }}</span>
-                        </label>
-                    </div>
-                    <InputError class="mt-2" :message="form.errors.subjects" />
-                </div>
-
                 <div class="mt-6 flex justify-end gap-3">
                     <SecondaryButton type="button" @click="showModal = false">Cancel</SecondaryButton>
                     <PrimaryButton :disabled="form.processing">Save</PrimaryButton>
                 </div>
             </form>
         </Modal>
+
+        <TeacherDetailsModal
+            :show="detailsOpen"
+            :teacher-id="detailsTeacherId"
+            @close="detailsOpen = false"
+        />
     </AdminLayout>
 </template>

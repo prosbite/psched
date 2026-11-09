@@ -10,7 +10,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-#[Fillable(['title', 'description', 'status', 'time_preset_id', 'max_proctors_per_teacher'])]
+#[Fillable(['title', 'description', 'status', 'days', 'exams_per_day', 'time_preset_id', 'school_year_id', 'quarter_id', 'max_proctors_per_teacher'])]
 class ScheduleGroup extends Model
 {
     use HasFactory;
@@ -22,6 +22,8 @@ class ScheduleGroup extends Model
     {
         return [
             'status' => ScheduleGroupStatus::class,
+            'days' => 'integer',
+            'exams_per_day' => 'integer',
             'max_proctors_per_teacher' => 'integer',
         ];
     }
@@ -32,6 +34,22 @@ class ScheduleGroup extends Model
     public function timePreset(): BelongsTo
     {
         return $this->belongsTo(TimePreset::class);
+    }
+
+    /**
+     * @return BelongsTo<SchoolYear, $this>
+     */
+    public function schoolYear(): BelongsTo
+    {
+        return $this->belongsTo(SchoolYear::class);
+    }
+
+    /**
+     * @return BelongsTo<Quarter, $this>
+     */
+    public function quarter(): BelongsTo
+    {
+        return $this->belongsTo(Quarter::class);
     }
 
     /**
@@ -47,7 +65,9 @@ class ScheduleGroup extends Model
      */
     public function subjects(): BelongsToMany
     {
-        return $this->belongsToMany(Subject::class, 'schedule_group_subjects')->withTimestamps();
+        return $this->belongsToMany(Subject::class, 'schedule_group_subjects')
+            ->withPivot('sort_order')
+            ->withTimestamps();
     }
 
     /**
@@ -56,5 +76,13 @@ class ScheduleGroup extends Model
     public function schedules(): HasMany
     {
         return $this->hasMany(Schedule::class);
+    }
+
+    /**
+     * @return HasMany<ScheduleGroupUnplaced, $this>
+     */
+    public function unplaced(): HasMany
+    {
+        return $this->hasMany(ScheduleGroupUnplaced::class);
     }
 }

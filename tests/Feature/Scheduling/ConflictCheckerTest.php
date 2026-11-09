@@ -93,3 +93,37 @@ test('a teacher may not exceed the proctor cap', function () {
     expect($this->checker->conflicts($existing, $candidate, 2))->not->toBeEmpty();
     expect($this->checker->isConflictFree($existing, $candidate, 3))->toBeTrue();
 });
+
+test('overlapping exams on different days do not conflict', function () {
+    $existing = [conflictEntry(['day' => 1])];
+
+    $candidate = conflictEntry(['day' => 2]);
+
+    expect($this->checker->isConflictFree($existing, $candidate, 2))->toBeTrue();
+});
+
+test('overlapping exams on the same day still conflict', function () {
+    $existing = [conflictEntry(['day' => 2])];
+
+    $candidate = conflictEntry(['day' => 2]);
+
+    expect($this->checker->conflicts($existing, $candidate, 2))->not->toBeEmpty();
+});
+
+test('the proctor cap is scoped to a single day', function () {
+    $existing = [
+        conflictEntry(['day' => 1, 'proctor_id' => 20, 'start_time' => '07:00:00', 'end_time' => '08:00:00']),
+        conflictEntry(['day' => 2, 'section_id' => 2, 'proctor_id' => 20, 'start_time' => '09:00:00', 'end_time' => '10:00:00']),
+    ];
+
+    $candidate = conflictEntry([
+        'day' => 3,
+        'section_id' => 3,
+        'subject_teacher_id' => 11,
+        'proctor_id' => 20,
+        'start_time' => '10:00:00',
+        'end_time' => '11:00:00',
+    ]);
+
+    expect($this->checker->isConflictFree($existing, $candidate, 1))->toBeTrue();
+});

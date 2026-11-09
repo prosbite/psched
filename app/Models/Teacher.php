@@ -6,7 +6,6 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 #[Fillable(['user_id', 'lastname', 'firstname', 'middlename', 'email'])]
@@ -23,11 +22,11 @@ class Teacher extends Model
     }
 
     /**
-     * @return BelongsToMany<Subject, $this>
+     * @return HasMany<SectionSubjectTeacher, $this>
      */
-    public function subjects(): BelongsToMany
+    public function sectionSubjectTeachers(): HasMany
     {
-        return $this->belongsToMany(Subject::class, 'teacher_subject')->withTimestamps();
+        return $this->hasMany(SectionSubjectTeacher::class);
     }
 
     /**
