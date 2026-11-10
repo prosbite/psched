@@ -90,6 +90,7 @@ class SubjectController extends Controller
         $validated = $request->validate([
             'subject_name' => ['required', 'string', 'max:255'],
             'grade_level_id' => ['required', 'integer', Rule::exists('grade_levels', 'id')],
+            'is_elective' => ['boolean'],
         ]);
 
         Subject::create($validated);
@@ -105,6 +106,7 @@ class SubjectController extends Controller
         $validated = $request->validate([
             'subject_name' => ['required', 'string', 'max:255'],
             'grade_level_id' => ['required', 'integer', Rule::exists('grade_levels', 'id')],
+            'is_elective' => ['boolean'],
         ]);
 
         $subject->update($validated);
