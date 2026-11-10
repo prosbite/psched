@@ -105,7 +105,7 @@ class ScheduleGenerator
                 for ($period = 0; $period < $examsPerDay; $period++) {
                     $subject = $gradeSubjects->get((($day - 1) * $examsPerDay) + $period);
 
-                    if (! $subject instanceof Subject || $subject->is_elective) {
+                    if (! $subject instanceof Subject) {
                         continue;
                     }
 
@@ -153,6 +153,38 @@ class ScheduleGenerator
                                 $slot,
                             );
 
+                            continue;
+                        }
+
+                        if ($subject->is_elective) {
+                            $entry = $this->placeElective(
+                                $group,
+                                $section,
+                                $subject,
+                                $subjectTeacherId,
+                                $day,
+                                $slot,
+                                $placed,
+                                $maxProctors,
+                            );
+
+                            if ($entry === null) {
+                                $unplaced[] = $this->unplacedEntry(
+                                    $day,
+                                    $section,
+                                    $subject,
+                                    'no_proctor',
+                                    sprintf('The elective "%s" could not be placed for "%s".', $subject->subject_name, $section->section_name),
+                                    $slot,
+                                );
+
+                                continue;
+                            }
+
+                            $placed[] = $entry;
+
+                            // An elective is automatically proctored by its
+                            // subject teacher, so it does not use the proctor budget.
                             continue;
                         }
 
@@ -248,6 +280,48 @@ class ScheduleGenerator
     }
 
     /**
+     * Place an elective exam, using its subject teacher as the proctor.
+     *
+     * Subject teachers may repeat across sections of the same grade at the
+     * same time (the grid merges those rows), so the teacher/proctor role is
+     * excluded from the conflict check; only section overlaps are considered.
+     *
+     * @param  array<int, array<string, mixed>>  $placed
+     * @return array<string, mixed>|null
+     */
+    private function placeElective(
+        ScheduleGroup $group,
+        Section $section,
+        Subject $subject,
+        int $subjectTeacherId,
+        int $day,
+        TimePresetSlot $slot,
+        array $placed,
+        int $maxProctors,
+    ): ?array {
+        $entry = [
+            'schedule_group_id' => (int) $group->id,
+            'day' => $day,
+            'section_id' => (int) $section->id,
+            'subject_id' => (int) $subject->id,
+            'subject_teacher_id' => $subjectTeacherId,
+            'proctor_id' => $subjectTeacherId,
+            'start_time' => $slot->start_time,
+            'end_time' => $slot->end_time,
+            'slot_id' => (int) $slot->id,
+        ];
+
+        $check = $entry;
+        unset($check['subject_teacher_id'], $check['proctor_id']);
+
+        if (! $this->conflicts->isConflictFree($placed, $check, $maxProctors)) {
+            return null;
+        }
+
+        return $entry;
+    }
+
+    /**
      * Build a "section-subject" => teacher id map from the section-aware assignments.
      *
      * The map holds a key for every enrolled pair; a pair whose teacher was
@@ -286,9 +360,8 @@ class ScheduleGenerator
     /**
      * Teacher ids that handle two or more distinct scheduled subjects.
      *
-     * Elective subjects produce no schedule rows, so enrollment rows for them
-     * do not count toward the exemption. Subject teachers with this load are
-     * removed from the proctor candidate pool.
+     * Electives count toward this load because they are scheduled too. Subject
+     * teachers with this load are removed from the proctor candidate pool.
      *
      * @param  array<string, int|null>  $assignments
      * @param  Collection<int, Subject>  $subjects
@@ -297,7 +370,6 @@ class ScheduleGenerator
     private function subjectTeachingExemptions(array $assignments, Collection $subjects): array
     {
         $scheduledSubjectIds = $subjects
-            ->filter(fn (Subject $subject): bool => ! $subject->is_elective)
             ->pluck('id')
             ->map(fn ($id): int => (int) $id)
             ->all();

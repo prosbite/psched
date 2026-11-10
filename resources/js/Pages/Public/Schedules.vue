@@ -130,11 +130,6 @@ const buildBlocks = (group, day) => {
             const timeLabel = slot ? `${displayTime(slot.start_time)}–${displayTime(slot.end_time)}` : '';
             const key = `${gradeId}-${period}`;
 
-            if (subject.is_elective) {
-                subjectGroups.push({ key, subject, timeLabel, elective: true, rows: [] });
-                continue;
-            }
-
             const rows = sections
                 .filter(
                     (section) =>
@@ -146,7 +141,12 @@ const buildBlocks = (group, day) => {
                     schedule: daySchedules.get(`${section.id}-${subject.id}`) ?? null,
                 }));
 
-            subjectGroups.push({ key, subject, timeLabel, elective: false, rows });
+            if (subject.is_elective && rows.length === 0) {
+                subjectGroups.push({ key, subject, timeLabel, elective: true, placeholder: true, rows: [] });
+                continue;
+            }
+
+            subjectGroups.push({ key, subject, timeLabel, elective: subject.is_elective, placeholder: false, rows });
         }
 
         blocks.push({ gradeId, grade: sections[0].grade_level ?? null, groups: subjectGroups });
@@ -225,7 +225,19 @@ const uniformTeacher = (group) => {
                         <h2 class="text-base font-semibold text-gray-900">{{ group.title }}</h2>
                         <p v-if="group.description" class="mt-1 text-sm text-gray-500">{{ group.description }}</p>
                     </div>
-                    <div class="flex items-center gap-2">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <a
+                            :href="route('public.schedules.export.pdf', group.id)"
+                            class="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                        >
+                            PDF
+                        </a>
+                        <a
+                            :href="route('public.schedules.export.excel', group.id)"
+                            class="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                        >
+                            Excel
+                        </a>
                         <button
                             v-for="day in (Number(group.days) || 1)"
                             :key="day"
@@ -258,7 +270,7 @@ const uniformTeacher = (group) => {
                                     </td>
                                 </tr>
                                 <template v-for="subjectGroup in block.groups" :key="subjectGroup.key">
-                                    <tr v-if="subjectGroup.elective">
+                                    <tr v-if="subjectGroup.elective && subjectGroup.placeholder">
                                         <td class="whitespace-nowrap border-r border-gray-100 px-4 py-3 align-top text-sm font-medium text-gray-900">
                                             {{ subjectGroup.timeLabel || '—' }}
                                         </td>
@@ -276,22 +288,23 @@ const uniformTeacher = (group) => {
                                             <td
                                                 v-if="rowIndex === 0"
                                                 :rowspan="subjectGroup.rows.length"
-                                                class="whitespace-nowrap border-r border-gray-100 px-4 py-3 align-top text-sm font-medium text-gray-900"
+                                                class="whitespace-nowrap border-r border-gray-100 px-4 py-3 align-middle text-sm font-medium text-gray-900"
                                             >
                                                 {{ subjectGroup.timeLabel || '—' }}
                                             </td>
                                             <td
                                                 v-if="rowIndex === 0"
                                                 :rowspan="subjectGroup.rows.length"
-                                                class="border-r border-gray-100 px-4 py-3 align-top text-sm text-gray-700"
+                                                class="border-r border-gray-100 px-4 py-3 align-middle text-sm text-gray-700"
                                             >
                                                 {{ subjectGroup.subject.subject_name }}
+                                                <span v-if="subjectGroup.elective" class="ms-1 rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800">Elective</span>
                                             </td>
                                             <td class="px-4 py-3 text-sm text-gray-700">{{ row.section.section_name }}</td>
                                             <td
                                                 v-if="rowIndex === 0 && uniformTeacher(subjectGroup)"
                                                 :rowspan="subjectGroup.rows.length"
-                                                class="border-r border-gray-100 px-4 py-3 align-top text-sm text-gray-700"
+                                                class="border-r border-gray-100 px-4 py-3 align-middle text-sm text-gray-700"
                                             >
                                                 {{ teacherName(uniformTeacher(subjectGroup)) }}
                                             </td>

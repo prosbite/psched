@@ -67,6 +67,38 @@ test('storing a schedule derives the subject teacher from the assignment', funct
     expect($schedule->day)->toBe(2);
 });
 
+test('storing an elective schedule uses the subject teacher as proctor', function () {
+    $admin = User::factory()->create(['role' => UserRole::Admin]);
+    [$group, $section, $subject, $teacher, $proctor] = scheduleStoreContext();
+
+    $elective = Subject::factory()->create([
+        'grade_level_id' => $section->grade_level_id,
+        'is_elective' => true,
+    ]);
+    SectionSubjectTeacher::factory()->create([
+        'section_id' => $section->id,
+        'subject_id' => $elective->id,
+        'teacher_id' => $teacher->id,
+    ]);
+    $group->subjects()->attach($elective);
+
+    $this->actingAs($admin)
+        ->post(route('schedule-groups.schedules.store', $group), [
+            'day' => 1,
+            'section_id' => $section->id,
+            'subject_id' => $elective->id,
+            'proctor_id' => $proctor->id,
+            'start_time' => '07:00',
+            'end_time' => '08:00',
+        ]);
+
+    $schedule = $group->schedules()->where('subject_id', $elective->id)->first();
+
+    expect($schedule)->not->toBeNull();
+    expect($schedule->subject_teacher_id)->toBe($teacher->id);
+    expect($schedule->proctor_id)->toBe($teacher->id);
+});
+
 test('storing a schedule for an unmapped pair is rejected', function () {
     $admin = User::factory()->create(['role' => UserRole::Admin]);
     [$group, $section, $subject, $teacher, $proctor] = scheduleStoreContext();

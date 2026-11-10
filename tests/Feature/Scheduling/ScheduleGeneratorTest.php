@@ -180,7 +180,7 @@ test('grade specific slots override the default slots for that grade', function 
     expect($ten['start_time'])->toBe('07:30:00');
 });
 
-test('an elective subject occupies its period but produces no schedule rows', function () {
+test('an elective without enrolled sections produces no schedule rows', function () {
     $grade = GradeLevel::factory()->create();
     $sectionA = generatorSectionFor($grade);
     $sectionB = generatorSectionFor($grade);
@@ -216,6 +216,35 @@ test('an elective subject occupies its period but produces no schedule rows', fu
     expect($report['unplaced'])->toBeEmpty();
     expect($report['placed'])->toHaveCount(4);
     expect(collect($report['placed'])->where('subject_id', $elective->id))->toBeEmpty();
+});
+
+test('an elective is proctored by its subject teacher', function () {
+    $grade = GradeLevel::factory()->create();
+    $section = generatorSectionFor($grade);
+
+    $elective = Subject::factory()->create(['grade_level_id' => $grade->id, 'is_elective' => true]);
+    $subjectTeacher = Teacher::factory()->create();
+    $otherTeacher = Teacher::factory()->create();
+
+    assignTeacher($section, $elective, $subjectTeacher);
+
+    $preset = generatorPreset(1);
+
+    $group = ScheduleGroup::factory()->create([
+        'time_preset_id' => $preset->id,
+        'days' => 1,
+        'exams_per_day' => 1,
+    ]);
+    $group->sections()->attach($section);
+    $group->subjects()->attach([$elective->id => ['sort_order' => 0]]);
+
+    $report = app(ScheduleGenerator::class)->generate($group, [$subjectTeacher->id, $otherTeacher->id]);
+
+    expect($report['unplaced'])->toBeEmpty();
+    expect($report['placed'])->toHaveCount(1);
+    expect($report['placed'][0]['subject_id'])->toBe($elective->id);
+    expect($report['placed'][0]['subject_teacher_id'])->toBe($subjectTeacher->id);
+    expect($report['placed'][0]['proctor_id'])->toBe($subjectTeacher->id);
 });
 
 test('proctor choice is cumulative across days', function () {
