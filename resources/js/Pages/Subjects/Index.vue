@@ -20,7 +20,7 @@ const props = defineProps({
 
 const showModal = ref(false);
 const editing = ref(null);
-const form = useForm({ subject_name: '', grade_level_id: '' });
+const form = useForm({ subject_name: '', grade_level_id: '', is_elective: false });
 
 const openCreate = () => {
     editing.value = null;
@@ -33,6 +33,7 @@ const openEdit = (subject) => {
     editing.value = subject;
     form.subject_name = subject.subject_name;
     form.grade_level_id = subject.grade_level_id;
+    form.is_elective = Boolean(subject.is_elective);
     form.clearErrors();
     showModal.value = true;
 };
@@ -117,7 +118,10 @@ const saveAssignments = () => {
                 </thead>
                 <tbody class="divide-y divide-gray-200">
                     <tr v-for="subject in subjects" :key="subject.id">
-                        <td class="px-4 py-3 text-sm text-gray-900">{{ subject.subject_name }}</td>
+                        <td class="px-4 py-3 text-sm text-gray-900">
+                            {{ subject.subject_name }}
+                            <span v-if="subject.is_elective" class="ms-2 rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800">Elective</span>
+                        </td>
                         <td class="px-4 py-3 text-sm text-gray-600">{{ subject.grade_level?.grade_level }}</td>
                         <td class="px-4 py-3 text-sm text-gray-600">{{ subject.section_subject_teachers_count }}</td>
                         <td class="whitespace-nowrap px-4 py-3 text-right text-sm">
@@ -159,6 +163,17 @@ const saveAssignments = () => {
                     </select>
                     <InputError class="mt-2" :message="form.errors.grade_level_id" />
                 </div>
+
+                <label for="is_elective" class="mt-4 flex items-center gap-2 text-sm text-gray-700">
+                    <input
+                        id="is_elective"
+                        v-model="form.is_elective"
+                        type="checkbox"
+                        class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    Elective subject
+                </label>
+                <InputError class="mt-2" :message="form.errors.is_elective" />
 
                 <div class="mt-6 flex justify-end gap-3">
                     <SecondaryButton type="button" @click="showModal = false">Cancel</SecondaryButton>

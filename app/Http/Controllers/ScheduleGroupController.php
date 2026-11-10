@@ -93,7 +93,6 @@ class ScheduleGroupController extends Controller
             ->get();
 
         $scheduledSubjectIds = $scheduleGroup->subjects
-            ->filter(fn (Subject $subject): bool => ! $subject->is_elective)
             ->pluck('id')
             ->map(fn ($id): int => (int) $id)
             ->all();
