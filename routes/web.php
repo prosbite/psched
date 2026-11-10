@@ -40,7 +40,11 @@ Route::middleware(['auth', 'admin'])->group(function () {
     Route::put('sections/{section}/assignments', [SectionController::class, 'assignTeachers'])
         ->name('sections.assignments.update');
     Route::resource('subjects', SubjectController::class)->except(['create', 'show', 'edit']);
+    Route::put('subjects/{subject}/assignments', [SubjectController::class, 'assignTeachers'])
+        ->name('subjects.assignments.update');
     Route::resource('teachers', TeacherController::class)->except(['create', 'show', 'edit']);
+    Route::put('teachers/{teacher}/assignments', [TeacherController::class, 'assignSubjects'])
+        ->name('teachers.assignments.update');
     Route::get('teachers/{teacher}/details', [TeacherController::class, 'details'])->name('teachers.details');
     Route::resource('users', UserController::class)->except(['create', 'show', 'edit']);
     Route::resource('time-presets', TimePresetController::class)->except(['show']);
