@@ -7,6 +7,7 @@ use App\Http\Requests\ScheduleRequest;
 use App\Models\Schedule;
 use App\Models\ScheduleGroup;
 use App\Models\SectionSubjectTeacher;
+use App\Models\Subject;
 use Carbon\Carbon;
 use Illuminate\Http\RedirectResponse;
 
@@ -83,12 +84,18 @@ class ScheduleController extends Controller
             ->whereNotNull('teacher_id')
             ->value('teacher_id');
 
+        $subject = Subject::query()->find($request->input('subject_id'));
+
+        $proctorId = $subject?->is_elective && $subjectTeacherId !== null
+            ? (int) $subjectTeacherId
+            : (int) $request->input('proctor_id');
+
         return [
             'day' => (int) $request->input('day'),
             'section_id' => (int) $request->input('section_id'),
             'subject_id' => (int) $request->input('subject_id'),
             'subject_teacher_id' => $subjectTeacherId === null ? null : (int) $subjectTeacherId,
-            'proctor_id' => (int) $request->input('proctor_id'),
+            'proctor_id' => $proctorId,
             'start_time' => Carbon::createFromFormat('H:i', (string) $request->input('start_time'))->format('H:i:s'),
             'end_time' => Carbon::createFromFormat('H:i', (string) $request->input('end_time'))->format('H:i:s'),
         ];

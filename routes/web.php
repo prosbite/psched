@@ -6,6 +6,7 @@ use App\Http\Controllers\PublicScheduleController;
 use App\Http\Controllers\QuarterController;
 use App\Http\Controllers\RoomController;
 use App\Http\Controllers\ScheduleController;
+use App\Http\Controllers\ScheduleExportController;
 use App\Http\Controllers\ScheduleGroupController;
 use App\Http\Controllers\SchoolYearController;
 use App\Http\Controllers\SectionController;
@@ -24,6 +25,10 @@ Route::get('/', function () {
 })->name('home');
 
 Route::get('/schedules', [PublicScheduleController::class, 'index'])->name('public.schedules');
+Route::get('/schedules/{scheduleGroup}/export/pdf', [ScheduleExportController::class, 'pdf'])
+    ->name('public.schedules.export.pdf');
+Route::get('/schedules/{scheduleGroup}/export/excel', [ScheduleExportController::class, 'excel'])
+    ->name('public.schedules.export.excel');
 
 Route::middleware('auth')->group(function () {
     Route::get('/dashboard', fn () => Inertia::render('Dashboard'))->name('dashboard');
@@ -53,6 +58,11 @@ Route::middleware(['auth', 'admin'])->group(function () {
     Route::resource('quarters', QuarterController::class)->except(['create', 'show', 'edit']);
 
     Route::resource('schedule-groups', ScheduleGroupController::class);
+
+    Route::get('schedule-groups/{scheduleGroup}/export/pdf', [ScheduleExportController::class, 'pdf'])
+        ->name('schedule-groups.export.pdf');
+    Route::get('schedule-groups/{scheduleGroup}/export/excel', [ScheduleExportController::class, 'excel'])
+        ->name('schedule-groups.export.excel');
 
     Route::put('schedule-groups/{scheduleGroup}/setup', [ScheduleGroupController::class, 'setup'])
         ->name('schedule-groups.setup');

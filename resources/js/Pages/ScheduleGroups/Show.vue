@@ -313,11 +313,6 @@ const dayBlocks = computed(() => {
             const timeLabel = slot ? `${displayTime(slot.start_time)}–${displayTime(slot.end_time)}` : '';
             const key = `${gradeId}-${period}`;
 
-            if (subject.is_elective) {
-                groups.push({ key, subject, timeLabel, elective: true, rows: [] });
-                continue;
-            }
-
             const rows = sections
                 .filter(
                     (section) =>
@@ -330,7 +325,12 @@ const dayBlocks = computed(() => {
                     unplaced: unplacedByKey.value.get(`${day}-${section.id}-${subject.id}`) ?? null,
                 }));
 
-            groups.push({ key, subject, timeLabel, elective: false, rows });
+            if (subject.is_elective && rows.length === 0) {
+                groups.push({ key, subject, timeLabel, elective: true, placeholder: true, rows: [] });
+                continue;
+            }
+
+            groups.push({ key, subject, timeLabel, elective: subject.is_elective, placeholder: false, rows });
         }
 
         blocks.push({ gradeId, grade: sections[0].grade_level ?? null, groups });
@@ -519,6 +519,18 @@ const saveAssignments = () => {
             <span class="text-sm text-gray-600">Max proctorships/teacher: {{ group.max_proctors_per_teacher }}</span>
 
             <div class="ms-auto flex flex-wrap gap-2">
+                <a
+                    :href="route('schedule-groups.export.pdf', group.id)"
+                    class="inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-widest text-gray-700 shadow-sm transition duration-150 ease-in-out hover:bg-gray-50"
+                >
+                    Export PDF
+                </a>
+                <a
+                    :href="route('schedule-groups.export.excel', group.id)"
+                    class="inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-widest text-gray-700 shadow-sm transition duration-150 ease-in-out hover:bg-gray-50"
+                >
+                    Export Excel
+                </a>
                 <Link :href="route('schedule-groups.edit', group.id)">
                     <SecondaryButton type="button">Edit Group</SecondaryButton>
                 </Link>
@@ -836,7 +848,7 @@ const saveAssignments = () => {
                                 </td>
                             </tr>
                             <template v-for="group in block.groups" :key="group.key">
-                                <tr v-if="group.elective">
+                                <tr v-if="group.elective && group.placeholder">
                                     <td class="whitespace-nowrap border-r border-gray-100 px-4 py-3 align-top text-sm font-medium text-gray-900">
                                         {{ group.timeLabel || '—' }}
                                     </td>
@@ -855,16 +867,17 @@ const saveAssignments = () => {
                                         <td
                                             v-if="rowIndex === 0"
                                             :rowspan="group.rows.length"
-                                            class="whitespace-nowrap border-r border-gray-100 px-4 py-3 align-top text-sm font-medium text-gray-900"
+                                            class="whitespace-nowrap border-r border-gray-100 px-4 py-3 align-middle text-sm font-medium text-gray-900"
                                         >
                                             {{ group.timeLabel || '—' }}
                                         </td>
                                         <td
                                             v-if="rowIndex === 0"
                                             :rowspan="group.rows.length"
-                                            class="border-r border-gray-100 px-4 py-3 align-top text-sm text-gray-700"
+                                            class="border-r border-gray-100 px-4 py-3 align-middle text-sm text-gray-700"
                                         >
                                             {{ group.subject.subject_name }}
+                                            <span v-if="group.elective" class="ms-1 rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800">Elective</span>
                                         </td>
                                         <td class="px-4 py-3 text-sm text-gray-700">
                                             {{ row.section.section_name }}
@@ -879,7 +892,7 @@ const saveAssignments = () => {
                                         <td
                                             v-if="rowIndex === 0 && uniformTeacher(group)"
                                             :rowspan="group.rows.length"
-                                            class="border-r border-gray-100 px-4 py-3 align-top text-sm text-gray-700"
+                                            class="border-r border-gray-100 px-4 py-3 align-middle text-sm text-gray-700"
                                         >
                                             <button
                                                 v-if="uniformTeacher(group)?.id"
