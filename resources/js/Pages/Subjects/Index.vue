@@ -1,6 +1,6 @@
 <script setup>
-import { ref } from 'vue';
-import { Head, useForm } from '@inertiajs/vue3';
+import { computed, ref } from 'vue';
+import { Head, router, useForm } from '@inertiajs/vue3';
 import AdminLayout from '@/Layouts/AdminLayout.vue';
 import FlashBanner from '@/Components/FlashBanner.vue';
 import Modal from '@/Components/Modal.vue';
@@ -10,9 +10,12 @@ import TextInput from '@/Components/TextInput.vue';
 import PrimaryButton from '@/Components/PrimaryButton.vue';
 import SecondaryButton from '@/Components/SecondaryButton.vue';
 
-defineProps({
+const props = defineProps({
     subjects: { type: Array, required: true },
     gradeLevels: { type: Array, required: true },
+    sections: { type: Array, required: true },
+    teachers: { type: Array, required: true },
+    assignments: { type: Array, required: true },
 });
 
 const showModal = ref(false);
@@ -47,6 +50,48 @@ const destroy = (subject) => {
         form.delete(route('subjects.destroy', subject.id));
     }
 };
+
+const teacherName = (teacher) => [teacher.firstname, teacher.middlename, teacher.lastname].filter(Boolean).join(' ');
+
+const assignOpen = ref(false);
+const assigningSubject = ref(null);
+const assignmentValues = ref({});
+
+const assignableSections = computed(() => {
+    if (!assigningSubject.value) {
+        return [];
+    }
+
+    return props.sections.filter((section) => section.grade_level_id === assigningSubject.value.grade_level_id);
+});
+
+const openAssign = (subject) => {
+    assigningSubject.value = subject;
+
+    const values = {};
+
+    for (const assignment of props.assignments) {
+        if (assignment.subject_id === subject.id) {
+            values[assignment.section_id] = assignment.teacher_id;
+        }
+    }
+
+    assignmentValues.value = values;
+    assignOpen.value = true;
+};
+
+const saveAssignments = () => {
+    const assignments = assignableSections.value.map((section) => ({
+        section_id: section.id,
+        teacher_id: assignmentValues.value[section.id] ?? '',
+    }));
+
+    router.put(
+        route('subjects.assignments.update', assigningSubject.value.id),
+        { assignments },
+        { preserveScroll: true, onSuccess: () => (assignOpen.value = false) },
+    );
+};
 </script>
 
 <template>
@@ -56,7 +101,7 @@ const destroy = (subject) => {
         <FlashBanner />
 
         <div class="mb-4 flex items-center justify-between">
-            <p class="text-sm text-gray-600">Each subject belongs to a grade level. Assign its teacher per section on the Sections page.</p>
+            <p class="text-sm text-gray-600">Each subject belongs to a grade level. Assign its teacher per section here, or manage a teacher's subjects on the Teachers page.</p>
             <PrimaryButton @click="openCreate">Add Subject</PrimaryButton>
         </div>
 
@@ -76,7 +121,8 @@ const destroy = (subject) => {
                         <td class="px-4 py-3 text-sm text-gray-600">{{ subject.grade_level?.grade_level }}</td>
                         <td class="px-4 py-3 text-sm text-gray-600">{{ subject.section_subject_teachers_count }}</td>
                         <td class="whitespace-nowrap px-4 py-3 text-right text-sm">
-                            <button class="text-indigo-600 hover:text-indigo-900" @click="openEdit(subject)">Edit</button>
+                            <button class="text-indigo-600 hover:text-indigo-900" @click="openAssign(subject)">Assign Teachers</button>
+                            <button class="ms-3 text-indigo-600 hover:text-indigo-900" @click="openEdit(subject)">Edit</button>
                             <button class="ms-3 text-red-600 hover:text-red-900" @click="destroy(subject)">Delete</button>
                         </td>
                     </tr>
@@ -117,6 +163,47 @@ const destroy = (subject) => {
                 <div class="mt-6 flex justify-end gap-3">
                     <SecondaryButton type="button" @click="showModal = false">Cancel</SecondaryButton>
                     <PrimaryButton :disabled="form.processing">Save</PrimaryButton>
+                </div>
+            </form>
+        </Modal>
+
+        <Modal :show="assignOpen" @close="assignOpen = false" max-width="xl">
+            <form class="p-6" @submit.prevent="saveAssignments">
+                <h2 class="text-lg font-medium text-gray-900">
+                    Assign Teachers — {{ assigningSubject?.subject_name }}
+                </h2>
+                <p class="mt-1 text-sm text-gray-500">
+                    Choose the teacher for each section sitting this subject. Leave blank if unassigned.
+                </p>
+
+                <div class="mt-4 max-h-96 space-y-3 overflow-y-auto">
+                    <div
+                        v-for="section in assignableSections"
+                        :key="section.id"
+                        class="grid grid-cols-1 items-center gap-2 sm:grid-cols-2"
+                    >
+                        <span class="text-sm text-gray-700">
+                            {{ section.section_name }}
+                            <span class="text-xs text-gray-400">{{ section.grade_level?.grade_level }}</span>
+                        </span>
+                        <select
+                            v-model="assignmentValues[section.id]"
+                            class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                        >
+                            <option value="">No teacher</option>
+                            <option v-for="teacher in teachers" :key="teacher.id" :value="teacher.id">
+                                {{ teacherName(teacher) }}
+                            </option>
+                        </select>
+                    </div>
+                    <p v-if="assignableSections.length === 0" class="text-sm text-gray-500">
+                        No sections are defined for this grade level yet.
+                    </p>
+                </div>
+
+                <div class="mt-6 flex justify-end gap-3">
+                    <SecondaryButton type="button" @click="assignOpen = false">Cancel</SecondaryButton>
+                    <PrimaryButton>Save Assignments</PrimaryButton>
                 </div>
             </form>
         </Modal>

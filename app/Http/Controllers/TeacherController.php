@@ -2,12 +2,16 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\GradeLevel;
 use App\Models\Schedule;
+use App\Models\Section;
 use App\Models\SectionSubjectTeacher;
+use App\Models\Subject;
 use App\Models\Teacher;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -20,7 +24,80 @@ class TeacherController extends Controller
     {
         return Inertia::render('Teachers/Index', [
             'teachers' => Teacher::with('user')->orderBy('lastname')->get(),
+            'subjects' => Subject::with('gradeLevel')->orderBy('subject_name')->get(),
+            'sections' => Section::with('gradeLevel')->orderBy('section_name')->get(),
+            'gradeLevels' => GradeLevel::orderBy('grade_level')->get(),
+            'assignments' => SectionSubjectTeacher::query()
+                ->orderBy('section_id')
+                ->orderBy('subject_id')
+                ->get(['section_id', 'subject_id', 'teacher_id'])
+                ->map(fn (SectionSubjectTeacher $assignment): array => [
+                    'section_id' => (int) $assignment->section_id,
+                    'subject_id' => (int) $assignment->subject_id,
+                    'teacher_id' => $assignment->teacher_id === null ? null : (int) $assignment->teacher_id,
+                ])
+                ->values(),
         ]);
+    }
+
+    /**
+     * Replace the subjects the given teacher handles, per section.
+     */
+    public function assignSubjects(Request $request, Teacher $teacher): RedirectResponse
+    {
+        $validated = $request->validate([
+            'assignments' => ['array'],
+            'assignments.*.section_id' => ['required', 'integer', Rule::exists('sections', 'id')],
+            'assignments.*.subject_id' => ['required', 'integer', Rule::exists('subjects', 'id')],
+        ]);
+
+        $rows = $validated['assignments'] ?? [];
+
+        $sectionGrades = Section::query()
+            ->whereIn('id', collect($rows)->pluck('section_id')->all())
+            ->pluck('grade_level_id', 'id');
+
+        $subjectGrades = Subject::query()
+            ->whereIn('id', collect($rows)->pluck('subject_id')->all())
+            ->pluck('grade_level_id', 'id');
+
+        $pairs = [];
+
+        foreach ($rows as $row) {
+            $sectionId = (int) $row['section_id'];
+            $subjectId = (int) $row['subject_id'];
+
+            if (! isset($sectionGrades[$sectionId], $subjectGrades[$subjectId])) {
+                continue;
+            }
+
+            if ((int) $sectionGrades[$sectionId] !== (int) $subjectGrades[$subjectId]) {
+                continue;
+            }
+
+            $pairs[$sectionId.'-'.$subjectId] = [$sectionId, $subjectId];
+        }
+
+        $existing = SectionSubjectTeacher::query()
+            ->where('teacher_id', $teacher->id)
+            ->get(['id', 'section_id', 'subject_id']);
+
+        foreach ($existing as $assignment) {
+            $key = ((int) $assignment->section_id).'-'.((int) $assignment->subject_id);
+
+            if (! array_key_exists($key, $pairs)) {
+                $assignment->delete();
+            }
+        }
+
+        foreach ($pairs as [$sectionId, $subjectId]) {
+            SectionSubjectTeacher::updateOrCreate(
+                ['section_id' => $sectionId, 'subject_id' => $subjectId],
+                ['teacher_id' => $teacher->id],
+            );
+        }
+
+        return back()->with('success', 'Subject assignments saved.');
     }
 
     /**
