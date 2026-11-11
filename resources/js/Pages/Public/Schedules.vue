@@ -100,7 +100,6 @@ const timeSlotsForGrade = (group, day, gradeId) => {
 };
 
 const buildBlocks = (group, day) => {
-    const examsPerDay = Math.max(1, Number(group.exams_per_day) || 3);
     const daySchedules = new Map();
 
     for (const schedule of group.schedules ?? []) {
@@ -115,6 +114,7 @@ const buildBlocks = (group, day) => {
     const blocks = [];
     const gradeIds = [...grades.keys()].sort((a, b) => a - b);
     const enrolled = new Set((group.enrollments ?? []).map((pair) => `${pair.section_id}-${pair.subject_id}`));
+    const plan = group.subject_plan ?? {};
 
     for (const gradeId of gradeIds) {
         const sections = grades.get(gradeId) ?? [];
@@ -122,19 +122,23 @@ const buildBlocks = (group, day) => {
             continue;
         }
 
-        const subjects = subjectsByGradeMap.get(gradeId) ?? [];
+        const subjectsById = new Map(
+            (subjectsByGradeMap.get(gradeId) ?? []).map((subject) => [Number(subject.id), subject]),
+        );
+        const entries = plan?.[day]?.[gradeId] ?? [];
         const slots = timeSlotsForGrade(group, day, gradeId);
         const subjectGroups = [];
 
-        for (let period = 0; period < examsPerDay; period++) {
-            const subject = subjects[(Number(day) - 1) * examsPerDay + period];
+        for (const entry of entries) {
+            const subject = subjectsById.get(Number(entry.subject_id));
             if (!subject) {
                 continue;
             }
 
-            const slot = slots[period];
+            const period = entry.period;
+            const slot = period === null || period === undefined ? null : slots[period];
             const timeLabel = slot ? `${displayTime(slot.start_time)}–${displayTime(slot.end_time)}` : '';
-            const key = `${gradeId}-${period}`;
+            const key = `${gradeId}-${subject.id}`;
 
             const rows = sections
                 .filter(

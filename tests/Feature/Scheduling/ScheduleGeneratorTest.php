@@ -760,3 +760,113 @@ test('proctor balancing counts distinct busy slots, not section assignments', fu
     expect($firstPlacement)->not->toBeNull();
     expect($firstPlacement['proctor_id'])->toBe($sharedTeacher->id);
 });
+
+test('subjects reflow into the next day when a middle day has fewer slots', function () {
+    $grade = GradeLevel::factory()->create();
+    $section = generatorSectionFor($grade);
+
+    $subjects = collect(range(1, 5))
+        ->map(fn (int $index): Subject => Subject::factory()->create([
+            'grade_level_id' => $grade->id,
+            'subject_name' => 'Subject '.$index,
+        ]));
+
+    $subjectTeacher = Teacher::factory()->create();
+    $proctor = Teacher::factory()->create();
+
+    foreach ($subjects as $subject) {
+        assignTeacher($section, $subject, $subjectTeacher);
+    }
+
+    $default = generatorPreset(3);
+
+    $override = TimePreset::factory()->create();
+    $override->slots()->createMany([
+        ['start_time' => '13:00:00', 'end_time' => '14:00:00', 'sort_order' => 0],
+        ['start_time' => '14:00:00', 'end_time' => '15:00:00', 'sort_order' => 1],
+    ]);
+
+    $group = ScheduleGroup::factory()->create([
+        'time_preset_id' => $default->id,
+        'days' => 3,
+        'exams_per_day' => 3,
+        'max_proctors_per_teacher' => 3,
+    ]);
+    $group->sections()->attach($section);
+    $group->subjects()->attach($subjects->mapWithKeys(fn (Subject $subject, int $index): array => [
+        $subject->id => ['sort_order' => $index],
+    ])->all());
+    $group->dayPresets()->create([
+        'day' => 2,
+        'time_preset_id' => $override->id,
+    ]);
+
+    $report = app(ScheduleGenerator::class)->generate($group, [$proctor->id]);
+
+    expect($report['unplaced'])->toBeEmpty();
+    expect($report['placed'])->toHaveCount(5);
+
+    $timesBySubject = collect($report['placed'])->mapWithKeys(fn (array $entry): array => [
+        (int) $entry['subject_id'] => [$entry['day'], $entry['start_time']],
+    ]);
+
+    expect($timesBySubject[$subjects[0]->id])->toBe([1, '07:00:00']);
+    expect($timesBySubject[$subjects[1]->id])->toBe([1, '08:00:00']);
+    expect($timesBySubject[$subjects[2]->id])->toBe([1, '09:00:00']);
+    expect($timesBySubject[$subjects[3]->id])->toBe([2, '13:00:00']);
+    expect($timesBySubject[$subjects[4]->id])->toBe([2, '14:00:00']);
+});
+
+test('subjects that fit no day are reported on the last exam day', function () {
+    $grade = GradeLevel::factory()->create();
+    $section = generatorSectionFor($grade);
+
+    $subjects = collect(range(1, 6))
+        ->map(fn (int $index): Subject => Subject::factory()->create([
+            'grade_level_id' => $grade->id,
+            'subject_name' => 'Subject '.$index,
+        ]));
+
+    $subjectTeacher = Teacher::factory()->create();
+    $proctor = Teacher::factory()->create();
+
+    foreach ($subjects as $subject) {
+        assignTeacher($section, $subject, $subjectTeacher);
+    }
+
+    $default = generatorPreset(2);
+
+    $override = TimePreset::factory()->create();
+    $override->slots()->create([
+        'start_time' => '13:00:00',
+        'end_time' => '14:00:00',
+        'sort_order' => 0,
+    ]);
+
+    $group = ScheduleGroup::factory()->create([
+        'time_preset_id' => $default->id,
+        'days' => 2,
+        'exams_per_day' => 3,
+    ]);
+    $group->sections()->attach($section);
+    $group->subjects()->attach($subjects->mapWithKeys(fn (Subject $subject, int $index): array => [
+        $subject->id => ['sort_order' => $index],
+    ])->all());
+    $group->dayPresets()->create([
+        'day' => 2,
+        'time_preset_id' => $override->id,
+    ]);
+
+    $report = app(ScheduleGenerator::class)->generate($group, [$proctor->id]);
+
+    expect($report['placed'])->toHaveCount(3);
+    expect($report['unplaced'])->toHaveCount(3);
+
+    foreach ($report['unplaced'] as $entry) {
+        expect($entry['day'])->toBe(2);
+        expect($entry['reason_code'])->toBe('missing_slot');
+        expect($entry['reason'])->toContain('time slot');
+        expect($entry['start_time'])->toBeNull();
+        expect($entry['end_time'])->toBeNull();
+    }
+});

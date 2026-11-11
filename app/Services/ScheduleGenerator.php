@@ -14,10 +14,11 @@ use Illuminate\Support\Collection;
  * Builds a fixed-timetable, multi-day exam grid for a schedule group.
  *
  * The timetable is derived from the group's ordered subject selection per
- * grade: subjects are chunked into "exams_per_day" periods, so position
- * `(day - 1) * exams_per_day + period` maps to one subject. Every section
- * enrolled in a subject of the same grade therefore sits it at the same
- * day/period, mirroring the school's assessment grid. Enrollment is the
+ * grade: the shared subject slot planner consumes the ordered subjects as a
+ * queue, filling each day's available periods in order and carrying any
+ * remainder into the next day. Every section enrolled in a subject of the
+ * same grade therefore sits it at the same day/period, mirroring the school's
+ * assessment grid. Enrollment is the
  * `section_subject_teacher` mapping: a section without a row for a subject is
  * not sitting it and is skipped. Proctors are chosen greedily from the
  * least-loaded candidates (lowest overall busy-slot count, then lowest id),
@@ -33,7 +34,10 @@ use Illuminate\Support\Collection;
  */
 class ScheduleGenerator
 {
-    public function __construct(private readonly ConflictChecker $conflicts) {}
+    public function __construct(
+        private readonly ConflictChecker $conflicts,
+        private readonly SubjectSlotPlanner $planner,
+    ) {}
 
     /**
      * Generate a grid for the given schedule group.
@@ -78,40 +82,27 @@ class ScheduleGenerator
         ));
 
         $sectionsByGrade = $sections->groupBy(fn (Section $section): int => (int) $section->grade_level_id);
-        $subjectsByGrade = $subjects->groupBy(fn (Subject $subject): int => (int) $subject->grade_level_id);
 
         $gradeIds = $sectionsByGrade->keys()
             ->map(fn ($id): int => (int) $id)
             ->sort()
             ->values();
 
-        $effectiveSlotsByDay = $this->effectiveSlotsByDay($group, $days, $gradeIds);
+        $plan = $this->planner->plan($group, $sections, $subjects, $days, $examsPerDay);
 
         // Teaching work is fixed by the timetable and is counted before any
         // proctor is chosen, so proctors are balanced against the full load
         // they will carry across the whole exam duration.
-        $loadTotals = $this->teachingBusyTotals(
-            $days,
-            $examsPerDay,
-            $gradeIds,
-            $sectionsByGrade,
-            $subjectsByGrade,
-            $assignments,
-            $effectiveSlotsByDay,
-        );
+        $loadTotals = $this->teachingBusyTotals($plan, $sectionsByGrade, $assignments);
 
         for ($day = 1; $day <= $days; $day++) {
             foreach ($gradeIds as $gradeId) {
                 $gradeSections = $sectionsByGrade->get($gradeId)->values();
-                $gradeSubjects = $subjectsByGrade->get($gradeId, collect())->values();
-                $effectiveSlots = $effectiveSlotsByDay[$day][$gradeId] ?? collect();
+                $entries = $plan[$day][$gradeId] ?? [];
 
-                for ($period = 0; $period < $examsPerDay; $period++) {
-                    $subject = $gradeSubjects->get((($day - 1) * $examsPerDay) + $period);
-
-                    if (! $subject instanceof Subject) {
-                        continue;
-                    }
+                foreach ($entries as $planned) {
+                    $subject = $planned['subject'];
+                    $slot = $planned['slot'];
 
                     // A section sits a subject only when it has an enrollment
                     // (section_subject_teacher) row for it. A missing row means
@@ -127,8 +118,6 @@ class ScheduleGenerator
                         continue;
                     }
 
-                    $slot = $effectiveSlots->get($period);
-
                     if (! $slot instanceof TimePresetSlot) {
                         foreach ($enrolledSections as $section) {
                             $unplaced[] = $this->unplacedEntry(
@@ -136,7 +125,7 @@ class ScheduleGenerator
                                 $section,
                                 $subject,
                                 'missing_slot',
-                                'No time slot is configured for this period.',
+                                'No free time slot remains for this subject across the exam days.',
                                 null,
                             );
                         }
@@ -326,82 +315,35 @@ class ScheduleGenerator
     }
 
     /**
-     * Resolve each day's effective slots per grade.
-     *
-     * A day's override preset (when present and not deleted) replaces the
-     * group's default preset. Within a preset, grade-specific slots replace
-     * the preset's default slots, matching the existing grid behavior.
-     *
-     * @param  Collection<int, int>  $gradeIds
-     * @return array<int, array<int, Collection<int, TimePresetSlot>>>
-     */
-    private function effectiveSlotsByDay(ScheduleGroup $group, int $days, Collection $gradeIds): array
-    {
-        $dayPresets = $group->dayPresets->keyBy('day');
-        $result = [];
-
-        for ($day = 1; $day <= $days; $day++) {
-            $preset = $dayPresets->get($day)?->timePreset ?? $group->timePreset;
-            $slots = $preset?->slots ?? collect();
-            $defaultSlots = $slots->whereNull('grade_level_id')->sortBy('sort_order')->values();
-            $slotsByGrade = $slots->whereNotNull('grade_level_id')
-                ->groupBy(fn (TimePresetSlot $slot): int => (int) $slot->grade_level_id);
-
-            foreach ($gradeIds as $gradeId) {
-                $gradeSlots = $slotsByGrade->get($gradeId, collect())->sortBy('sort_order')->values();
-
-                $result[$day][$gradeId] = $gradeSlots->isNotEmpty() ? $gradeSlots : $defaultSlots;
-            }
-        }
-
-        return $result;
-    }
-
-    /**
      * Count each teacher's distinct teaching busy slots before placing anything.
      *
-     * This walks the same day/grade/period/subject order as placement so the
+     * This walks the exact plan produced by the SubjectSlotPlanner, so the
      * pre-pass and the placed grid agree. Electives are included, and sections
      * of the same grade sitting the same subject at the same time count once.
      *
-     * @param  Collection<int, int>  $gradeIds
+     * @param  array<int, array<int, array<int, array{subject: Subject, period: int|null, slot: TimePresetSlot|null}>>>  $plan
      * @param  Collection<int, Collection<int, Section>>  $sectionsByGrade
-     * @param  Collection<int, Collection<int, Subject>>  $subjectsByGrade
      * @param  array<string, int|null>  $assignments
-     * @param  array<int, array<int, Collection<int, TimePresetSlot>>>  $effectiveSlotsByDay
      * @return array<int, int>
      */
-    private function teachingBusyTotals(
-        int $days,
-        int $examsPerDay,
-        Collection $gradeIds,
-        Collection $sectionsByGrade,
-        Collection $subjectsByGrade,
-        array $assignments,
-        array $effectiveSlotsByDay,
-    ): array {
+    private function teachingBusyTotals(array $plan, Collection $sectionsByGrade, array $assignments): array
+    {
         $busy = [];
         $seen = [];
 
-        for ($day = 1; $day <= $days; $day++) {
-            foreach ($gradeIds as $gradeId) {
-                $gradeSections = $sectionsByGrade->get($gradeId)->values();
-                $gradeSubjects = $subjectsByGrade->get($gradeId, collect())->values();
+        foreach ($plan as $day => $grades) {
+            foreach ($grades as $gradeId => $entries) {
+                $gradeSections = $sectionsByGrade->get($gradeId, collect())->values();
 
-                for ($period = 0; $period < $examsPerDay; $period++) {
-                    $subject = $gradeSubjects->get((($day - 1) * $examsPerDay) + $period);
-
-                    if (! $subject instanceof Subject) {
-                        continue;
-                    }
-
-                    $slot = ($effectiveSlotsByDay[$day][$gradeId] ?? collect())->get($period);
+                foreach ($entries as $entry) {
+                    $subject = $entry['subject'];
+                    $slot = $entry['slot'];
 
                     if (! $slot instanceof TimePresetSlot) {
                         continue;
                     }
 
-                    $slotKey = ScheduleLoad::slotKey($day, (string) $slot->start_time, (string) $slot->end_time);
+                    $slotKey = ScheduleLoad::slotKey((int) $day, (string) $slot->start_time, (string) $slot->end_time);
 
                     foreach ($gradeSections as $section) {
                         $taskKey = $this->taskKey($section, $subject);

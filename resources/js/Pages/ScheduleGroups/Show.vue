@@ -13,6 +13,7 @@ import SecondaryButton from '@/Components/SecondaryButton.vue';
 
 const props = defineProps({
     group: { type: Object, required: true },
+    subjectPlan: { type: Object, default: () => ({}) },
     allSections: { type: Array, required: true },
     allSubjects: { type: Array, required: true },
     allPresets: { type: Array, required: true },
@@ -337,7 +338,6 @@ const timeSlotsForGrade = (day, gradeId) => {
 
 const dayBlocks = computed(() => {
     const day = Number(activeDay.value);
-    const examsPerDay = Math.max(1, Number(props.group.exams_per_day) || 3);
     const blocks = [];
     const gradeIds = [...sectionsByGrade.value.keys()].sort((a, b) => a - b);
 
@@ -347,19 +347,23 @@ const dayBlocks = computed(() => {
             continue;
         }
 
-        const subjects = subjectsByGrade.value.get(gradeId) ?? [];
+        const subjectsById = new Map(
+            (subjectsByGrade.value.get(gradeId) ?? []).map((subject) => [Number(subject.id), subject]),
+        );
+        const entries = props.subjectPlan?.[day]?.[gradeId] ?? [];
         const slots = timeSlotsForGrade(day, gradeId);
         const groups = [];
 
-        for (let period = 0; period < examsPerDay; period++) {
-            const subject = subjects[(day - 1) * examsPerDay + period];
+        for (const entry of entries) {
+            const subject = subjectsById.get(Number(entry.subject_id));
             if (!subject) {
                 continue;
             }
 
-            const slot = slots[period];
+            const period = entry.period;
+            const slot = period === null || period === undefined ? null : slots[period];
             const timeLabel = slot ? `${displayTime(slot.start_time)}–${displayTime(slot.end_time)}` : '';
-            const key = `${gradeId}-${period}`;
+            const key = `${gradeId}-${subject.id}`;
 
             const rows = sections
                 .filter(
@@ -761,8 +765,9 @@ const saveAssignments = () => {
                 <div class="mt-4">
                     <InputLabel value="Subjects (ordered per grade)" />
                     <p class="mt-1 text-xs text-gray-500">
-                        The order defines the day/period: the first subjects fill day 1, up to
-                        {{ group.exams_per_day }} exams per day.
+                        The order defines which subjects are sat first. Each day fills its available slots in order,
+                        up to {{ group.exams_per_day }} exams per day; a short day carries the remaining subjects into
+                        the next day.
                     </p>
                     <div class="mt-2 max-h-72 space-y-3 overflow-y-auto rounded-md border border-gray-200 p-3">
                         <div v-for="gradeGroup in setupSubjectGrades" :key="gradeGroup.gradeId">

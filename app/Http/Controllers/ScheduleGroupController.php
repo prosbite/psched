@@ -14,6 +14,7 @@ use App\Models\Teacher;
 use App\Models\TimePreset;
 use App\Services\ScheduleGenerator;
 use App\Services\ScheduleLoad;
+use App\Services\SubjectSlotPlanner;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
@@ -113,6 +114,7 @@ class ScheduleGroupController extends Controller
 
         return Inertia::render('ScheduleGroups/Show', [
             'group' => $scheduleGroup,
+            'subjectPlan' => app(SubjectSlotPlanner::class)->displayPlanForGroup($scheduleGroup),
             'allSections' => Section::with(['gradeLevel', 'room'])->orderBy('section_name')->get(),
             'allSubjects' => Subject::with('gradeLevel')->orderBy('subject_name')->get(),
             'allPresets' => TimePreset::withCount('slots')->orderBy('name')->get(),

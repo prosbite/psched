@@ -15,13 +15,16 @@ use Illuminate\Support\Collection;
 /**
  * Builds the printable/exportable view of a schedule group's grid.
  *
- * This mirrors the data shown by the ScheduleGroups/Show grid: subjects are
- * chunked per grade by `exams_per_day`, only enrolled sections get a row, and
- * unplaced exams are flagged in their section row. Subject groups expose a
- * `uniform_teacher` so the exports can reproduce the grid's rowspans.
+ * This mirrors the data shown by the ScheduleGroups/Show grid: the shared
+ * subject slot planner fills each day's available periods per grade, only
+ * enrolled sections get a row, and unplaced exams are flagged in their
+ * section row. Subject groups expose a `uniform_teacher` so the exports can
+ * reproduce the grid's rowspans.
  */
 class ScheduleGrid
 {
+    public function __construct(private readonly SubjectSlotPlanner $planner) {}
+
     /**
      * @return array{title: string, description: string|null, exam_title: string, school_year: string|null, date_of_assessment: string|null, days: array<int, array{day: int, grades: array<int, array{grade: string, subjects: array<int, array<string, mixed>>}>}>}
      */
@@ -52,7 +55,6 @@ class ScheduleGrid
             ->values();
 
         $sectionsByGrade = $sections->groupBy(fn (Section $section): int => (int) $section->grade_level_id);
-        $subjectsByGrade = $subjects->groupBy(fn (Subject $subject): int => (int) $subject->grade_level_id);
 
         $schedules = [];
         foreach ($group->schedules as $schedule) {
@@ -66,38 +68,24 @@ class ScheduleGrid
 
         $enrolled = $this->enrolledPairs($sections, $subjects);
 
-        $dayPresets = $group->dayPresets->keyBy('day');
-
         $gradeIds = $sectionsByGrade->keys()->map(fn ($id): int => (int) $id)->sort()->values();
+
+        $plan = $this->planner->plan($group, $sections, $subjects, $days, $examsPerDay);
 
         $daysData = [];
 
         for ($day = 1; $day <= $days; $day++) {
-            $preset = $dayPresets->get($day)?->timePreset ?? $group->timePreset;
-            $slots = $preset?->slots ?? collect();
-            $defaultSlots = $slots->whereNull('grade_level_id')->sortBy('sort_order')->values();
-            $slotsByGrade = $slots->whereNotNull('grade_level_id')
-                ->groupBy(fn (TimePresetSlot $slot): int => (int) $slot->grade_level_id);
-
             $gradesData = [];
 
             foreach ($gradeIds as $gradeId) {
                 $gradeSections = $sectionsByGrade->get($gradeId, collect())->values();
-                $gradeSubjects = $subjectsByGrade->get($gradeId, collect())->values();
-
-                $gradeSlots = $slotsByGrade->get($gradeId, collect())->sortBy('sort_order')->values();
-                $effectiveSlots = $gradeSlots->isNotEmpty() ? $gradeSlots : $defaultSlots;
+                $entries = $plan[$day][$gradeId] ?? [];
 
                 $subjectGroups = [];
 
-                for ($period = 0; $period < $examsPerDay; $period++) {
-                    $subject = $gradeSubjects->get((($day - 1) * $examsPerDay) + $period);
-
-                    if (! $subject instanceof Subject) {
-                        continue;
-                    }
-
-                    $slot = $effectiveSlots->get($period);
+                foreach ($entries as $planned) {
+                    $subject = $planned['subject'];
+                    $slot = $planned['slot'];
                     $time = $slot instanceof TimePresetSlot
                         ? $this->timeLabel($slot->start_time, $slot->end_time)
                         : '';

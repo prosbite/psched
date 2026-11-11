@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Enums\ScheduleGroupStatus;
 use App\Models\ScheduleGroup;
 use App\Models\SectionSubjectTeacher;
+use App\Services\SubjectSlotPlanner;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -54,6 +55,11 @@ class PublicScheduleController extends Controller
                         'subject_id' => (int) $enrollment->subject_id,
                     ])
                     ->values(),
+            );
+
+            $group->setAttribute(
+                'subject_plan',
+                app(SubjectSlotPlanner::class)->displayPlanForGroup($group),
             );
         });
 

@@ -14,8 +14,8 @@
 - **Proctor load** = number of proctor assignments.
 - **Overall load** = number of distinct busy slots where the teacher appears as subject teacher or proctor. A self-proctored elective slot counts once.
 - **Keep the existing 2+ distinct-subject proctoring exemption** (distinct subjects, used only for proctor eligibility).
-- If neither the day preset nor the default exists, that day's subjects are reported as `missing_slot`.
-- **Subject-to-day assignment stays implicit and is out of scope**: the ordered per-grade subject list continues to be chunked by `exams_per_day` (`(day - 1) * exams_per_day + period`). Do not add a `day` column to `schedule_group_subjects`, a per-day subject picker, or subject auto-reflow. A day whose effective preset has more slots than `exams_per_day` simply leaves the extra periods unused; a day with fewer slots reports the overflow subjects as `missing_slot`.
+- **Subject-to-day assignment stays implicit, and subjects now reflow into available slots**: the ordered per-grade subject list is consumed as a queue across days. Each day/grade offers `min(exams_per_day, effective slot count)` periods; a day with fewer slots carries the remaining subjects into the next day's first free period. Do not add a `day` column to `schedule_group_subjects`, a per-day subject picker, or per-period pinning. A day/grade with no preset contributes zero capacity and its subjects flow forward.
+- If a subject cannot fit anywhere (total available periods across all days are fewer than the ordered subjects), it is reported as `missing_slot` on the last exam day with null times. Existing reason codes and the `'time slot'` reason substring are preserved.
 
 ## Data model
 
@@ -181,3 +181,71 @@
 - The overall load is a balancing target, not a cap; some spread can remain because of the per-day cap, conflicts, and fixed subject-teacher assignments.
 - Do not change `max_proctors_per_teacher` semantics; keep it per day.
 - The teacher load panel counts are based on persisted schedules (post-generation); before generation, teaching/proctor totals are zero while the existing distinct-subject exemption count remains available.
+
+## Follow-up (active task): reflow subjects into available day slots
+
+Status: the multi-day preset and load-balancing work above is implemented. This follow-up replaces the fixed subject-index mapping used by the generator, grid, exports, and both Vue grids.
+
+### Problem
+
+All four consumers still compute `(day - 1) * exams_per_day + period` and look up `slots[period]`. When a middle day's effective preset has fewer than `exams_per_day` slots, the overflow subject is reported as `missing_slot` instead of moving to the next day, and the grid/export/public page show the wrong day mapping. Required behavior: consume the ordered per-grade subject list as a queue, filling each day's available periods in order.
+
+### Shared planner (single source of truth)
+
+Add `app/Services/SubjectSlotPlanner.php`:
+
+- `plan(ScheduleGroup $group, Collection $sections, Collection $subjects, int $days, int $examsPerDay): array`
+  - Call `$group->loadMissing(['timePreset.slots', 'dayPresets.timePreset.slots'])` so callers cannot pass a group with half-loaded presets.
+  - Callers pass their existing ordered subject collection; the planner groups it by `grade_level_id` and derives `gradeIds` from the sections.
+  - Resolve effective slots per day/grade exactly as the generator does today: day override preset → group default preset; grade-specific slots → preset default slots.
+  - For each grade, consume the ordered subjects as a queue:
+    - For each day `1..days`, `capacity = min(examsPerDay, slotCount)`.
+    - For each `period 0..capacity-1`, append `{subject, period, slot}` and advance the queue.
+    - After all days, append any remaining subjects to the last exam day as `{subject, period: null, slot: null}`.
+  - Return `[day][gradeId] => list<order-preserving entries>`.
+  - Keep `min(exams_per_day, slotCount)`; `exams_per_day` still caps a day whose preset has extra slots.
+- `displayPlanForGroup(ScheduleGroup $group): array`
+  - `loadMissing(['timePreset.slots', 'dayPresets.timePreset.slots', 'sections', 'subjects'])`, clamp `days`/`exams_per_day` to at least 1, sort subjects by `pivot.sort_order` then id, run `plan()`, and return `[day][gradeId] => list<array{subject_id: int, period: int|null}>` for the Vue props.
+
+### Consumers
+
+- `app/Services/ScheduleGenerator.php`
+  - Build the plan once and use it for both the teaching busy-slot pre-pass and placement; delete the `(day - 1) * examsPerDay + period` lookup.
+  - Loop `day -> gradeId -> plan[day][gradeId]` and keep the existing enrolled-section, teacher, elective, cap, and conflict handling.
+  - `slot === null` (overflow) emits `missing_slot` for enrolled sections with null times and reason `'No free time slot remains for this subject across the exam days.'` (contains the required `'time slot'` substring).
+  - The pre-pass and placement must iterate the identical plan order.
+- `app/Services/ScheduleGrid.php`
+  - Build the plan from its ordered `$group->subjects`; replace the period loop and index lookup. `slot === null` yields an empty time label.
+- `app/Http/Controllers/ScheduleGroupController.php::show()`
+  - Pass `subjectPlan` from `displayPlanForGroup($scheduleGroup)`.
+- `app/Http/Controllers/PublicScheduleController.php::index()`
+  - In the existing per-group `each()` loop, set `$group->subject_plan = displayPlanForGroup($group)`.
+- `resources/js/Pages/ScheduleGroups/Show.vue`
+  - Add a `subjectPlan` prop. In `dayBlocks`, iterate `props.subjectPlan[day][gradeId]`, look up the subject by id, and use `slots[period]` only when `period !== null`. Remove the `examsPerDay` index formula and use the subject id in the group key.
+  - Update the setup copy: subjects fill each day's available slots in order, and a short day carries the remaining subjects into the next day.
+- `resources/js/Pages/Public/Schedules.vue`
+  - In `buildBlocks`, iterate `group.subject_plan[day][gradeId]` with the same subject/slot rules.
+
+### Tests
+
+- `ScheduleGeneratorTest`:
+  - 3 days, 5 ordered subjects, middle day preset with 2 slots: day 1 gets 3, day 2 gets the last 2, no unplaced.
+  - Total overflow: 2 days, 6 subjects, capacities 2 and 1 → 3 `missing_slot` rows on day 2 with null times and a reason containing `'time slot'`.
+  - Existing single-day short-preset test must keep passing (3 subjects, 2 slots → 1 overflow on day 1).
+- `ScheduleGridTest`:
+  - A two-day grid with a short second day shows the reflowed subject group on day 2, not day 1.
+- No frontend test harness exists; verify both Vue grids in the manual smoke test.
+
+### Validation
+
+- `vendor\bin\pint app routes tests --format agent`
+- `vendor\bin\pest --compact`
+- `npm run build`
+- Manual: 9 ordered subjects with day capacities 3, 2, 3 → 8 scheduled and 1 unplaced on day 3; admin grid, public page, PDF, and Excel must all show the same day mapping.
+
+### Risks
+
+- Any consumer left on the old formula will disagree with the generator. After the change, grep for `exams_per_day + period`, `examsPerDay + period`, and `subjects[(day` and remove the remaining index arithmetic.
+- The plan is per grade, so grades with different grade-specific slot counts reflow independently.
+- Overflow is attributed to the last exam day; the "Fix time preset" link therefore targets the last day's preset even when an earlier day is the short one.
+- Keep `reason_code = missing_slot` and the `'time slot'` reason substring so the existing UI and tests keep working.

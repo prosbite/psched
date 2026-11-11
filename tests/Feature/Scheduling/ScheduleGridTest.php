@@ -178,3 +178,100 @@ test('the grid uses each day preset times', function () {
     expect($grid['days'][0]['grades'][0]['subjects'][0]['time'])->toBe('8:00 AM – 9:00 AM');
     expect($grid['days'][1]['grades'][0]['subjects'][0]['time'])->toBe('1:00 PM – 2:00 PM');
 });
+
+test('the grid reflows subjects past a short day into the next day', function () {
+    $grade = GradeLevel::factory()->create(['grade_level' => '7']);
+
+    $section = Section::factory()->create([
+        'grade_level_id' => $grade->id,
+        'room_id' => Room::factory()->create(['room_name' => 'Room A'])->id,
+        'section_name' => 'Section A',
+    ]);
+
+    $subjects = collect(range(1, 3))
+        ->map(fn (int $index): Subject => Subject::factory()->create([
+            'grade_level_id' => $grade->id,
+            'subject_name' => 'Subject '.$index,
+        ]));
+
+    $teacher = Teacher::factory()->create();
+    $proctor = Teacher::factory()->create();
+
+    foreach ($subjects as $subject) {
+        SectionSubjectTeacher::factory()->create([
+            'section_id' => $section->id,
+            'subject_id' => $subject->id,
+            'teacher_id' => $teacher->id,
+        ]);
+    }
+
+    $default = TimePreset::factory()->create();
+    $default->slots()->createMany([
+        ['start_time' => '08:00:00', 'end_time' => '09:00:00', 'sort_order' => 0],
+        ['start_time' => '09:30:00', 'end_time' => '10:30:00', 'sort_order' => 1],
+    ]);
+
+    $shortDay = TimePreset::factory()->create();
+    $shortDay->slots()->create([
+        'start_time' => '07:00:00',
+        'end_time' => '08:00:00',
+        'sort_order' => 0,
+    ]);
+
+    $group = ScheduleGroup::factory()->create([
+        'time_preset_id' => $default->id,
+        'days' => 2,
+        'exams_per_day' => 2,
+    ]);
+    $group->sections()->attach($section);
+    $group->subjects()->attach($subjects->mapWithKeys(fn (Subject $subject, int $index): array => [
+        $subject->id => ['sort_order' => $index],
+    ])->all());
+    $group->dayPresets()->create([
+        'day' => 1,
+        'time_preset_id' => $shortDay->id,
+    ]);
+
+    Schedule::factory()->create([
+        'schedule_group_id' => $group->id,
+        'day' => 1,
+        'section_id' => $section->id,
+        'subject_id' => $subjects[0]->id,
+        'subject_teacher_id' => $teacher->id,
+        'proctor_id' => $proctor->id,
+        'start_time' => '07:00:00',
+        'end_time' => '08:00:00',
+    ]);
+
+    Schedule::factory()->create([
+        'schedule_group_id' => $group->id,
+        'day' => 2,
+        'section_id' => $section->id,
+        'subject_id' => $subjects[1]->id,
+        'subject_teacher_id' => $teacher->id,
+        'proctor_id' => $proctor->id,
+        'start_time' => '08:00:00',
+        'end_time' => '09:00:00',
+    ]);
+
+    Schedule::factory()->create([
+        'schedule_group_id' => $group->id,
+        'day' => 2,
+        'section_id' => $section->id,
+        'subject_id' => $subjects[2]->id,
+        'subject_teacher_id' => $teacher->id,
+        'proctor_id' => $proctor->id,
+        'start_time' => '09:30:00',
+        'end_time' => '10:30:00',
+    ]);
+
+    $grid = app(ScheduleGrid::class)->forGroup($group);
+
+    $dayOne = collect($grid['days'][0]['grades'][0]['subjects'])->pluck('subject')->all();
+    $dayTwo = collect($grid['days'][1]['grades'][0]['subjects'])->pluck('subject')->all();
+
+    expect($dayOne)->toBe(['Subject 1']);
+    expect($dayTwo)->toBe(['Subject 2', 'Subject 3']);
+    expect($grid['days'][0]['grades'][0]['subjects'][0]['time'])->toBe('7:00 AM – 8:00 AM');
+    expect($grid['days'][1]['grades'][0]['subjects'][0]['time'])->toBe('8:00 AM – 9:00 AM');
+});
