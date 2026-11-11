@@ -23,7 +23,8 @@ use Illuminate\Support\Collection;
  * not sitting it and is skipped. Proctors are chosen greedily from the
  * least-loaded candidates (lowest overall busy-slot count, then lowest id),
  * respecting the per-day proctor cap and same-day overlap rules. Teachers who
- * handle two or more distinct subjects in the grid are exempt from proctoring.
+ * handle two or more distinct subjects on a day are exempt from proctoring on
+ * that day only.
  *
  * Each day may use its own time preset; a day without an override falls back
  * to the group's default preset. Grade-specific slots still override the
@@ -74,13 +75,6 @@ class ScheduleGenerator
 
         $assignments = $this->subjectTeacherMap($sections, $subjects);
 
-        // A teacher who handles two or more distinct subjects in this grid is
-        // exempt from proctoring, so they are removed from the candidate pool.
-        $proctors = array_values(array_diff(
-            $this->proctorCandidates($proctorIds),
-            $this->subjectTeachingExemptions($assignments, $subjects),
-        ));
-
         $sectionsByGrade = $sections->groupBy(fn (Section $section): int => (int) $section->grade_level_id);
 
         $gradeIds = $sectionsByGrade->keys()
@@ -90,12 +84,21 @@ class ScheduleGenerator
 
         $plan = $this->planner->plan($group, $sections, $subjects, $days, $examsPerDay);
 
+        $proctors = $this->proctorCandidates($proctorIds);
+
+        // A teacher who handles two or more distinct subjects on a given day
+        // is exempt from proctoring only for that day; the rule resets on the
+        // next day.
+        $exemptByDay = $this->subjectTeachingExemptionsByDay($plan, $sectionsByGrade, $assignments);
+
         // Teaching work is fixed by the timetable and is counted before any
         // proctor is chosen, so proctors are balanced against the full load
         // they will carry across the whole exam duration.
         $loadTotals = $this->teachingBusyTotals($plan, $sectionsByGrade, $assignments);
 
         for ($day = 1; $day <= $days; $day++) {
+            $dayProctors = array_values(array_diff($proctors, $exemptByDay[$day] ?? []));
+
             foreach ($gradeIds as $gradeId) {
                 $gradeSections = $sectionsByGrade->get($gradeId)->values();
                 $entries = $plan[$day][$gradeId] ?? [];
@@ -188,7 +191,7 @@ class ScheduleGenerator
                             $subjectTeacherId,
                             $day,
                             $slot,
-                            $proctors,
+                            $dayProctors,
                             $placed,
                             $loadTotals,
                             $maxProctors,
@@ -411,43 +414,59 @@ class ScheduleGenerator
     }
 
     /**
-     * Teacher ids that handle two or more distinct scheduled subjects.
+     * Teacher ids that handle two or more distinct subjects on each day.
      *
-     * Electives count toward this load because they are scheduled too. Subject
-     * teachers with this load are removed from the proctor candidate pool.
+     * Electives count toward this load because they are scheduled too. The
+     * exemption is scoped to the day: a teacher exempted on day 1 is eligible
+     * to proctor again on day 2.
      *
+     * @param  array<int, array<int, array<int, array{subject: Subject, period: int|null, slot: TimePresetSlot|null}>>>  $plan
+     * @param  Collection<int, Collection<int, Section>>  $sectionsByGrade
      * @param  array<string, int|null>  $assignments
-     * @param  Collection<int, Subject>  $subjects
-     * @return array<int, int>
+     * @return array<int, array<int, int>>
      */
-    private function subjectTeachingExemptions(array $assignments, Collection $subjects): array
+    private function subjectTeachingExemptionsByDay(array $plan, Collection $sectionsByGrade, array $assignments): array
     {
-        $scheduledSubjectIds = $subjects
-            ->pluck('id')
-            ->map(fn ($id): int => (int) $id)
-            ->all();
+        $subjectsByTeacherByDay = [];
 
-        $subjectsByTeacher = [];
+        foreach ($plan as $day => $grades) {
+            foreach ($grades as $gradeId => $entries) {
+                $gradeSections = $sectionsByGrade->get($gradeId, collect())->values();
 
-        foreach ($assignments as $key => $teacherId) {
-            if ($teacherId === null) {
-                continue;
+                foreach ($entries as $entry) {
+                    if (! $entry['slot'] instanceof TimePresetSlot) {
+                        continue;
+                    }
+
+                    $subject = $entry['subject'];
+                    $subjectId = (int) $subject->id;
+
+                    foreach ($gradeSections as $section) {
+                        $taskKey = $this->taskKey($section, $subject);
+
+                        if (! array_key_exists($taskKey, $assignments)) {
+                            continue;
+                        }
+
+                        $teacherId = $assignments[$taskKey];
+
+                        if ($teacherId === null) {
+                            continue;
+                        }
+
+                        $subjectsByTeacherByDay[(int) $day][(int) $teacherId][$subjectId] = true;
+                    }
+                }
             }
-
-            $subjectId = (int) explode('-', $key, 2)[1];
-
-            if (! in_array($subjectId, $scheduledSubjectIds, true)) {
-                continue;
-            }
-
-            $subjectsByTeacher[$teacherId][$subjectId] = true;
         }
 
         $exempt = [];
 
-        foreach ($subjectsByTeacher as $teacherId => $subjectIds) {
-            if (count($subjectIds) >= 2) {
-                $exempt[] = (int) $teacherId;
+        foreach ($subjectsByTeacherByDay as $day => $teachers) {
+            foreach ($teachers as $teacherId => $subjectIds) {
+                if (count($subjectIds) >= 2) {
+                    $exempt[$day][] = (int) $teacherId;
+                }
             }
         }
 

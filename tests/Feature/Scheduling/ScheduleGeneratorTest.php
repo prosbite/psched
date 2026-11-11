@@ -870,3 +870,48 @@ test('subjects that fit no day are reported on the last exam day', function () {
         expect($entry['end_time'])->toBeNull();
     }
 });
+
+test('the proctoring exemption resets the next day', function () {
+    $grade = GradeLevel::factory()->create();
+    $section = generatorSectionFor($grade);
+
+    $subjectOne = Subject::factory()->create(['grade_level_id' => $grade->id]);
+    $subjectTwo = Subject::factory()->create(['grade_level_id' => $grade->id]);
+    $subjectThree = Subject::factory()->create(['grade_level_id' => $grade->id]);
+
+    $exemptTeacher = Teacher::factory()->create();
+    $otherTeacher = Teacher::factory()->create();
+
+    // The only allowed proctor handles two subjects on day 1 but none on day 2.
+    assignTeacher($section, $subjectOne, $exemptTeacher);
+    assignTeacher($section, $subjectTwo, $exemptTeacher);
+    assignTeacher($section, $subjectThree, $otherTeacher);
+
+    $preset = generatorPreset(2);
+
+    $group = ScheduleGroup::factory()->create([
+        'time_preset_id' => $preset->id,
+        'days' => 2,
+        'exams_per_day' => 2,
+    ]);
+    $group->sections()->attach($section);
+    $group->subjects()->attach([
+        $subjectOne->id => ['sort_order' => 0],
+        $subjectTwo->id => ['sort_order' => 1],
+        $subjectThree->id => ['sort_order' => 2],
+    ]);
+
+    $report = app(ScheduleGenerator::class)->generate($group, [$exemptTeacher->id]);
+
+    $placed = collect($report['placed']);
+    $unplaced = collect($report['unplaced']);
+
+    expect($placed)->toHaveCount(1);
+    expect($placed->first()['day'])->toBe(2);
+    expect($placed->first()['subject_id'])->toBe($subjectThree->id);
+    expect($placed->first()['proctor_id'])->toBe($exemptTeacher->id);
+
+    expect($unplaced)->toHaveCount(2);
+    expect($unplaced->pluck('day')->unique()->all())->toBe([1]);
+    expect($unplaced->pluck('reason_code')->unique()->all())->toBe(['no_proctor']);
+});

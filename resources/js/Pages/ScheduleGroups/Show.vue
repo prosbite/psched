@@ -25,6 +25,7 @@ const props = defineProps({
     proctorLoadsByDay: { type: Object, default: () => ({}) },
     overallLoadsByDay: { type: Object, default: () => ({}) },
     subjectTeacherLoads: { type: Object, default: () => ({}) },
+    subjectTeacherLoadsByDay: { type: Object, default: () => ({}) },
     assignments: { type: Array, default: () => [] },
     enrollments: { type: Array, default: () => [] },
 });
@@ -36,7 +37,9 @@ const isDraft = computed(() => props.group.status === 'draft');
 const isActive = computed(() => props.group.status === 'active');
 
 const subjectTeacherLoad = (teacher) => Number(props.subjectTeacherLoads?.[teacher?.id] ?? 0);
-const isSubjectTeacherExempt = (teacher) => subjectTeacherLoad(teacher) >= 2;
+const subjectTeacherLoadOnDay = (teacher, day) => Number(props.subjectTeacherLoadsByDay?.[teacher?.id]?.[day] ?? 0);
+const exemptDays = (teacher) => dayTabs.value.filter((day) => subjectTeacherLoadOnDay(teacher, day) >= 2);
+const isSubjectTeacherExempt = (teacher) => exemptDays(teacher).length > 0;
 
 const teachingLoad = (teacher) => Number(props.teachingLoads?.[teacher?.id] ?? 0);
 const proctorLoad = (teacher) => Number(props.proctorLoads?.[teacher?.id] ?? 0);
@@ -87,9 +90,7 @@ onMounted(() => {
         .slice()
         .sort((a, b) => Number(a.pivot?.sort_order ?? 0) - Number(b.pivot?.sort_order ?? 0) || a.id - b.id)
         .map((subject) => subject.id);
-    selectedProctors.value = props.teachers
-        .filter((teacher) => !isSubjectTeacherExempt(teacher))
-        .map((teacher) => teacher.id);
+    selectedProctors.value = props.teachers.map((teacher) => teacher.id);
 });
 
 const saveSetup = () => {
@@ -177,7 +178,7 @@ const action = (name, label, destructive = false) => {
 
 const selectedProctors = ref([]);
 
-const eligibleProctors = computed(() => props.teachers.filter((teacher) => !isSubjectTeacherExempt(teacher)));
+const eligibleProctors = computed(() => props.teachers);
 
 const allProctorsSelected = computed(
     () =>
@@ -827,7 +828,7 @@ const saveAssignments = () => {
                     <div>
                         <h3 class="text-base font-semibold text-gray-800">Teacher load</h3>
                         <p class="mt-1 text-sm text-gray-500">
-                            Teaching slots, proctor count against the per-day cap of {{ group.max_proctors_per_teacher }}, and overall load (teaching + proctor). Teachers with two or more subjects are exempt from proctoring. Unchecked teachers never proctor a generated grid.
+                            Teaching slots, proctor count against the per-day cap of {{ group.max_proctors_per_teacher }}, and overall load (teaching + proctor). Teachers with two or more subjects on a given day are exempt from proctoring that day; the rule resets the next day. Unchecked teachers never proctor a generated grid.
                         </p>
                         <p class="mt-2 text-xs text-gray-500">
                             Overall load across the teacher list: min {{ overallSpread.min }}, max {{ overallSpread.max }}, average {{ overallSpread.average.toFixed(1) }}, spread {{ overallSpread.spread }}.
@@ -855,8 +856,7 @@ const saveAssignments = () => {
                                 type="checkbox"
                                 class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 disabled:opacity-40"
                                 :checked="selectedProctors.includes(teacher.id)"
-                                :disabled="isSubjectTeacherExempt(teacher)"
-                                :title="isSubjectTeacherExempt(teacher) ? 'Exempt: handles two or more subjects' : ''"
+                                :title="isSubjectTeacherExempt(teacher) ? `Exempt from proctoring on day(s) ${exemptDays(teacher).join(', ')}` : ''"
                                 @change="toggleProctor(teacher.id)"
                             />
                             <span class="text-gray-700">
@@ -894,7 +894,7 @@ const saveAssignments = () => {
                                 v-if="isSubjectTeacherExempt(teacher)"
                                 class="mt-1 rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800"
                             >
-                                Exempt from proctoring
+                                Exempt on day{{ exemptDays(teacher).length === 1 ? '' : 's' }} {{ exemptDays(teacher).join(', ') }}
                             </span>
                         </span>
                     </label>
