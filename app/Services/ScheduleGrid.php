@@ -29,6 +29,7 @@ class ScheduleGrid
     {
         $group->loadMissing([
             'timePreset.slots',
+            'dayPresets.timePreset.slots',
             'schoolYear',
             'quarter',
             'sections.gradeLevel',
@@ -65,16 +66,19 @@ class ScheduleGrid
 
         $enrolled = $this->enrolledPairs($sections, $subjects);
 
-        $slots = $group->timePreset?->slots ?? collect();
-        $defaultSlots = $slots->whereNull('grade_level_id')->sortBy('sort_order')->values();
-        $slotsByGrade = $slots->whereNotNull('grade_level_id')
-            ->groupBy(fn (TimePresetSlot $slot): int => (int) $slot->grade_level_id);
+        $dayPresets = $group->dayPresets->keyBy('day');
 
         $gradeIds = $sectionsByGrade->keys()->map(fn ($id): int => (int) $id)->sort()->values();
 
         $daysData = [];
 
         for ($day = 1; $day <= $days; $day++) {
+            $preset = $dayPresets->get($day)?->timePreset ?? $group->timePreset;
+            $slots = $preset?->slots ?? collect();
+            $defaultSlots = $slots->whereNull('grade_level_id')->sortBy('sort_order')->values();
+            $slotsByGrade = $slots->whereNotNull('grade_level_id')
+                ->groupBy(fn (TimePresetSlot $slot): int => (int) $slot->grade_level_id);
+
             $gradesData = [];
 
             foreach ($gradeIds as $gradeId) {

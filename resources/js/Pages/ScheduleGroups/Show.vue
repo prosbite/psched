@@ -17,7 +17,12 @@ const props = defineProps({
     allSubjects: { type: Array, required: true },
     allPresets: { type: Array, required: true },
     teachers: { type: Array, required: true },
+    teachingLoads: { type: Object, default: () => ({}) },
     proctorLoads: { type: Object, default: () => ({}) },
+    overallLoads: { type: Object, default: () => ({}) },
+    teachingLoadsByDay: { type: Object, default: () => ({}) },
+    proctorLoadsByDay: { type: Object, default: () => ({}) },
+    overallLoadsByDay: { type: Object, default: () => ({}) },
     subjectTeacherLoads: { type: Object, default: () => ({}) },
     assignments: { type: Array, default: () => [] },
     enrollments: { type: Array, default: () => [] },
@@ -32,12 +37,47 @@ const isActive = computed(() => props.group.status === 'active');
 const subjectTeacherLoad = (teacher) => Number(props.subjectTeacherLoads?.[teacher?.id] ?? 0);
 const isSubjectTeacherExempt = (teacher) => subjectTeacherLoad(teacher) >= 2;
 
+const teachingLoad = (teacher) => Number(props.teachingLoads?.[teacher?.id] ?? 0);
+const proctorLoad = (teacher) => Number(props.proctorLoads?.[teacher?.id] ?? 0);
+const overallLoad = (teacher) => Number(props.overallLoads?.[teacher?.id] ?? 0);
+
+const loadByDay = (map, teacher, day) => Number(map?.[teacher?.id]?.[day] ?? 0);
+
+const proctorAtCap = (teacher) =>
+    dayTabs.value.some((day) => loadByDay(props.proctorLoadsByDay, teacher, day) >= Number(props.group.max_proctors_per_teacher));
+
+const dayBreakdown = (map, teacher) =>
+    dayTabs.value.map((day) => `D${day} ${loadByDay(map, teacher, day)}`).join(' · ');
+
+const overallSpread = computed(() => {
+    const loads = props.teachers.map((teacher) => overallLoad(teacher));
+
+    if (loads.length === 0) {
+        return { min: 0, max: 0, average: 0, spread: 0 };
+    }
+
+    const min = Math.min(...loads);
+    const max = Math.max(...loads);
+
+    return {
+        min,
+        max,
+        average: loads.reduce((sum, value) => sum + value, 0) / loads.length,
+        spread: max - min,
+    };
+});
+
 const setupForm = useForm({
     time_preset_id: props.group.time_preset_id ?? '',
     days: props.group.days ?? 3,
     exams_per_day: props.group.exams_per_day ?? 3,
     sections: [],
     subjects: [],
+    day_presets: (props.group.day_presets ?? []).reduce((map, preset) => {
+        map[Number(preset.day)] = preset.time_preset_id ?? '';
+
+        return map;
+    }, {}),
 });
 
 onMounted(() => {
@@ -272,8 +312,16 @@ const subjectsByGrade = computed(() => {
     return map;
 });
 
-const timeSlotsForGrade = (gradeId) => {
-    const slots = props.group.time_preset?.slots ?? [];
+const presetForDay = (day) => {
+    const override = (props.group.day_presets ?? []).find((entry) => Number(entry.day) === Number(day));
+
+    return override?.time_preset ?? props.group.time_preset ?? null;
+};
+
+const dayPresetId = (day) => presetForDay(day)?.id ?? null;
+
+const timeSlotsForGrade = (day, gradeId) => {
+    const slots = presetForDay(day)?.slots ?? [];
     const specific = slots
         .filter((slot) => slot.grade_level_id !== null && Number(slot.grade_level_id) === Number(gradeId))
         .sort((a, b) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0));
@@ -300,7 +348,7 @@ const dayBlocks = computed(() => {
         }
 
         const subjects = subjectsByGrade.value.get(gradeId) ?? [];
-        const slots = timeSlotsForGrade(gradeId);
+        const slots = timeSlotsForGrade(day, gradeId);
         const groups = [];
 
         for (let period = 0; period < examsPerDay; period++) {
@@ -513,10 +561,17 @@ const saveAssignments = () => {
                 Quarter: {{ group.quarter.name }}
             </span>
             <span v-if="group.time_preset" class="text-sm text-gray-600">
-                Preset: {{ group.time_preset.name }} ({{ group.time_preset.slots?.length ?? 0 }} slots)
+                Default preset: {{ group.time_preset.name }} ({{ group.time_preset.slots?.length ?? 0 }} slots)
+            </span>
+            <span
+                v-for="dayPreset in (group.day_presets ?? [])"
+                :key="`header-day-preset-${dayPreset.day}`"
+                class="text-sm text-gray-600"
+            >
+                Day {{ dayPreset.day }}: {{ dayPreset.time_preset?.name ?? 'default' }}
             </span>
             <span class="text-sm text-gray-600">{{ group.days }} day(s) × {{ group.exams_per_day }} exams/day</span>
-            <span class="text-sm text-gray-600">Max proctorships/teacher: {{ group.max_proctors_per_teacher }}</span>
+            <span class="text-sm text-gray-600">Max proctorships/teacher/day: {{ group.max_proctors_per_teacher }}</span>
 
             <div class="ms-auto flex flex-wrap gap-2">
                 <a
@@ -597,8 +652,8 @@ const saveAssignments = () => {
                                     Add schedule
                                 </button>
                                 <Link
-                                    v-if="item.reason_code === 'missing_slot' && group.time_preset_id"
-                                    :href="route('time-presets.edit', group.time_preset_id)"
+                                    v-if="item.reason_code === 'missing_slot' && dayPresetId(item.day)"
+                                    :href="route('time-presets.edit', dayPresetId(item.day))"
                                     class="ms-3 text-indigo-600 hover:text-indigo-900"
                                 >
                                     Fix time preset
@@ -620,7 +675,7 @@ const saveAssignments = () => {
 
                 <div class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
                     <div class="sm:col-span-3">
-                        <InputLabel for="setup_preset" value="Time Preset" />
+                        <InputLabel for="setup_preset" value="Default Time Preset" />
                         <select
                             id="setup_preset"
                             v-model="setupForm.time_preset_id"
@@ -659,6 +714,30 @@ const saveAssignments = () => {
                             class="mt-1 block w-full disabled:bg-gray-100"
                         />
                         <InputError class="mt-2" :message="setupForm.errors.exams_per_day" />
+                    </div>
+                </div>
+
+                <div class="mt-4">
+                    <InputLabel value="Per-day presets" />
+                    <p class="mt-1 text-xs text-gray-500">
+                        Leave a day on "Use default" to use the default preset above.
+                    </p>
+                    <div class="mt-2 grid grid-cols-1 gap-4 sm:grid-cols-3">
+                        <div v-for="day in (Number(setupForm.days) || 1)" :key="`setup-day-preset-${day}`">
+                            <InputLabel :for="`setup_day_preset_${day}`" :value="`Day ${day} preset`" />
+                            <select
+                                :id="`setup_day_preset_${day}`"
+                                v-model="setupForm.day_presets[day]"
+                                :disabled="!isDraft"
+                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:bg-gray-100"
+                            >
+                                <option value="">Use default</option>
+                                <option v-for="preset in allPresets" :key="preset.id" :value="preset.id">
+                                    {{ preset.name }} ({{ preset.slots_count }} slots)
+                                </option>
+                            </select>
+                            <InputError class="mt-2" :message="setupForm.errors[`day_presets.${day}`]" />
+                        </div>
                     </div>
                 </div>
 
@@ -743,7 +822,10 @@ const saveAssignments = () => {
                     <div>
                         <h3 class="text-base font-semibold text-gray-800">Teacher load</h3>
                         <p class="mt-1 text-sm text-gray-500">
-                            Proctorship count per teacher against the per-day cap of {{ group.max_proctors_per_teacher }}, plus the number of subjects each teacher handles. Teachers with two or more subjects are exempt from proctoring. Unchecked teachers never proctor a generated grid.
+                            Teaching slots, proctor count against the per-day cap of {{ group.max_proctors_per_teacher }}, and overall load (teaching + proctor). Teachers with two or more subjects are exempt from proctoring. Unchecked teachers never proctor a generated grid.
+                        </p>
+                        <p class="mt-2 text-xs text-gray-500">
+                            Overall load across the teacher list: min {{ overallSpread.min }}, max {{ overallSpread.max }}, average {{ overallSpread.average.toFixed(1) }}, spread {{ overallSpread.spread }}.
                         </p>
                     </div>
                     <label class="flex shrink-0 items-center gap-2 text-sm text-gray-700">
@@ -783,11 +865,22 @@ const saveAssignments = () => {
                             </span>
                         </span>
                         <span class="flex flex-col items-end text-right">
+                            <span class="font-medium text-gray-700">
+                                {{ teachingLoad(teacher) }} teaching slot{{ teachingLoad(teacher) === 1 ? '' : 's' }}
+                            </span>
+                            <span class="text-xs text-gray-500">{{ dayBreakdown(teachingLoadsByDay, teacher) }}</span>
                             <span
-                                class="font-medium"
-                                :class="(proctorLoads[teacher.id] ?? 0) >= group.max_proctors_per_teacher ? 'text-red-600' : 'text-gray-600'"
+                                class="mt-1 font-medium"
+                                :class="proctorAtCap(teacher) ? 'text-red-600' : 'text-gray-600'"
                             >
-                                {{ proctorLoads[teacher.id] ?? 0 }}/{{ group.max_proctors_per_teacher }} proctor
+                                {{ proctorLoad(teacher) }} proctor
+                            </span>
+                            <span class="text-xs text-gray-500">
+                                {{ dayBreakdown(proctorLoadsByDay, teacher) }} · cap {{ group.max_proctors_per_teacher }}/day
+                            </span>
+                            <span class="mt-1 text-xs font-medium text-gray-700">
+                                Overall: {{ overallLoad(teacher) }}
+                                <span class="font-normal text-gray-500">({{ dayBreakdown(overallLoadsByDay, teacher) }})</span>
                             </span>
                             <span class="text-xs text-gray-500">
                                 {{ subjectTeacherLoad(teacher) }} subject{{ subjectTeacherLoad(teacher) === 1 ? '' : 's' }}

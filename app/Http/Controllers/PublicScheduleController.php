@@ -19,6 +19,7 @@ class PublicScheduleController extends Controller
             ->where('status', ScheduleGroupStatus::Active->value)
             ->with([
                 'timePreset.slots',
+                'dayPresets.timePreset.slots',
                 'sections.gradeLevel',
                 'sections.room',
                 'subjects.gradeLevel',

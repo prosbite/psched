@@ -13,6 +13,7 @@ use App\Models\Subject;
 use App\Models\Teacher;
 use App\Models\TimePreset;
 use App\Services\ScheduleGenerator;
+use App\Services\ScheduleLoad;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
@@ -55,10 +56,16 @@ class ScheduleGroupController extends Controller
      */
     public function store(ScheduleGroupRequest $request): RedirectResponse
     {
+        $data = $request->validated();
+        $dayPresets = $data['day_presets'] ?? [];
+        unset($data['day_presets']);
+
         $group = ScheduleGroup::create([
-            ...$request->validated(),
+            ...$data,
             'status' => ScheduleGroupStatus::Draft,
         ]);
+
+        $this->syncDayPresets($group, $dayPresets, (int) $group->days);
 
         return redirect()
             ->route('schedule-groups.show', $group)
@@ -72,6 +79,7 @@ class ScheduleGroupController extends Controller
     {
         $scheduleGroup->load([
             'timePreset.slots',
+            'dayPresets.timePreset.slots',
             'schoolYear',
             'quarter',
             'sections.gradeLevel',
@@ -97,15 +105,24 @@ class ScheduleGroupController extends Controller
             ->map(fn ($id): int => (int) $id)
             ->all();
 
+        $teachers = Teacher::orderBy('lastname')->get();
+        $loads = app(ScheduleLoad::class)->fromSchedules(
+            $scheduleGroup->schedules,
+            $teachers->pluck('id')->all(),
+        );
+
         return Inertia::render('ScheduleGroups/Show', [
             'group' => $scheduleGroup,
             'allSections' => Section::with(['gradeLevel', 'room'])->orderBy('section_name')->get(),
             'allSubjects' => Subject::with('gradeLevel')->orderBy('subject_name')->get(),
             'allPresets' => TimePreset::withCount('slots')->orderBy('name')->get(),
-            'teachers' => Teacher::orderBy('lastname')->get(),
-            'proctorLoads' => $scheduleGroup->schedules
-                ->whereNotNull('proctor_id')
-                ->countBy('proctor_id'),
+            'teachers' => $teachers,
+            'teachingLoads' => $loads['teaching'],
+            'proctorLoads' => $loads['proctor'],
+            'overallLoads' => $loads['overall'],
+            'teachingLoadsByDay' => $loads['teaching_by_day'],
+            'proctorLoadsByDay' => $loads['proctor_by_day'],
+            'overallLoadsByDay' => $loads['overall_by_day'],
             'assignments' => $assignments
                 ->whereNotNull('teacher_id')
                 ->map(fn (SectionSubjectTeacher $assignment): array => [
@@ -134,6 +151,8 @@ class ScheduleGroupController extends Controller
      */
     public function edit(ScheduleGroup $scheduleGroup): Response
     {
+        $scheduleGroup->load('dayPresets');
+
         return Inertia::render('ScheduleGroups/Form', [
             'group' => $scheduleGroup,
             'timePresets' => TimePreset::withCount('slots')->orderBy('name')->get(),
@@ -147,7 +166,12 @@ class ScheduleGroupController extends Controller
      */
     public function update(ScheduleGroupRequest $request, ScheduleGroup $scheduleGroup): RedirectResponse
     {
-        $scheduleGroup->update($request->validated());
+        $data = $request->validated();
+        $dayPresets = $data['day_presets'] ?? [];
+        unset($data['day_presets']);
+
+        $scheduleGroup->update($data);
+        $this->syncDayPresets($scheduleGroup, $dayPresets, (int) $scheduleGroup->days);
 
         return redirect()
             ->route('schedule-groups.show', $scheduleGroup)
@@ -177,6 +201,8 @@ class ScheduleGroupController extends Controller
             'sections.*' => ['integer', Rule::exists('sections', 'id')],
             'subjects' => ['array'],
             'subjects.*' => ['integer', Rule::exists('subjects', 'id')],
+            'day_presets' => ['array'],
+            'day_presets.*' => ['nullable', 'integer', Rule::exists('time_presets', 'id')],
         ]);
 
         $scheduleGroup->update([
@@ -184,6 +210,8 @@ class ScheduleGroupController extends Controller
             'days' => (int) $validated['days'],
             'exams_per_day' => (int) $validated['exams_per_day'],
         ]);
+
+        $this->syncDayPresets($scheduleGroup, $validated['day_presets'] ?? [], (int) $validated['days']);
 
         $scheduleGroup->sections()->sync($validated['sections'] ?? []);
 
@@ -300,5 +328,51 @@ class ScheduleGroupController extends Controller
         return redirect()
             ->route('schedule-groups.show', $scheduleGroup)
             ->with('success', 'Schedule group archived.');
+    }
+
+    /**
+     * Sync the per-day preset overrides for a group.
+     *
+     * Keys may arrive as strings from JSON/Inertia; empty or null values mean
+     * "use the group's default preset" and delete any existing override.
+     *
+     * @param  array<int|string, int|string|null>  $dayPresets
+     */
+    private function syncDayPresets(ScheduleGroup $scheduleGroup, array $dayPresets, int $days): void
+    {
+        $normalized = [];
+
+        foreach ($dayPresets as $day => $presetId) {
+            if ($presetId === null || $presetId === '') {
+                continue;
+            }
+
+            $day = (int) $day;
+
+            if ($day < 1) {
+                continue;
+            }
+
+            $normalized[$day] = (int) $presetId;
+        }
+
+        $scheduleGroup->dayPresets()->delete();
+
+        $rows = [];
+
+        for ($day = 1; $day <= max(1, $days); $day++) {
+            if (! array_key_exists($day, $normalized)) {
+                continue;
+            }
+
+            $rows[] = [
+                'day' => $day,
+                'time_preset_id' => $normalized[$day],
+            ];
+        }
+
+        if ($rows !== []) {
+            $scheduleGroup->dayPresets()->createMany($rows);
+        }
     }
 }

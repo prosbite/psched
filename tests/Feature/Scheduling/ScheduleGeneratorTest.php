@@ -595,3 +595,168 @@ test('the generate endpoint requires at least one proctor', function () {
         ->post(route('schedule-groups.generate', $group), [])
         ->assertSessionHasErrors('proctors');
 });
+
+test('each day uses its own preset times and falls back to the default', function () {
+    $grade = GradeLevel::factory()->create();
+    $section = generatorSectionFor($grade);
+
+    $subjectOne = Subject::factory()->create(['grade_level_id' => $grade->id]);
+    $subjectTwo = Subject::factory()->create(['grade_level_id' => $grade->id]);
+    $subjectThree = Subject::factory()->create(['grade_level_id' => $grade->id]);
+
+    $subjectTeacher = Teacher::factory()->create();
+    $proctor = Teacher::factory()->create();
+
+    foreach ([$subjectOne, $subjectTwo, $subjectThree] as $subject) {
+        assignTeacher($section, $subject, $subjectTeacher);
+    }
+
+    $default = TimePreset::factory()->create();
+    $default->slots()->create([
+        'start_time' => '07:00:00',
+        'end_time' => '08:00:00',
+        'sort_order' => 0,
+    ]);
+
+    $override = TimePreset::factory()->create();
+    $override->slots()->create([
+        'start_time' => '13:00:00',
+        'end_time' => '14:00:00',
+        'sort_order' => 0,
+    ]);
+
+    $group = ScheduleGroup::factory()->create([
+        'time_preset_id' => $default->id,
+        'days' => 3,
+        'exams_per_day' => 1,
+    ]);
+    $group->sections()->attach($section);
+    $group->subjects()->attach([
+        $subjectOne->id => ['sort_order' => 0],
+        $subjectTwo->id => ['sort_order' => 1],
+        $subjectThree->id => ['sort_order' => 2],
+    ]);
+    $group->dayPresets()->create([
+        'day' => 2,
+        'time_preset_id' => $override->id,
+    ]);
+
+    $report = app(ScheduleGenerator::class)->generate($group, [$proctor->id]);
+
+    expect($report['unplaced'])->toBeEmpty();
+
+    $times = collect($report['placed'])->pluck('start_time', 'day')->sortKeys()->all();
+
+    expect($times)->toBe([
+        1 => '07:00:00',
+        2 => '13:00:00',
+        3 => '07:00:00',
+    ]);
+});
+
+test('a day whose preset was deleted falls back to the default preset', function () {
+    $grade = GradeLevel::factory()->create();
+    $section = generatorSectionFor($grade);
+
+    $subject = Subject::factory()->create(['grade_level_id' => $grade->id]);
+    $subjectTeacher = Teacher::factory()->create();
+    $proctor = Teacher::factory()->create();
+
+    assignTeacher($section, $subject, $subjectTeacher);
+
+    $default = TimePreset::factory()->create();
+    $default->slots()->create([
+        'start_time' => '09:00:00',
+        'end_time' => '10:00:00',
+        'sort_order' => 0,
+    ]);
+
+    $group = ScheduleGroup::factory()->create([
+        'time_preset_id' => $default->id,
+        'days' => 1,
+        'exams_per_day' => 1,
+    ]);
+    $group->sections()->attach($section);
+    $group->subjects()->attach($subject);
+    $group->dayPresets()->create([
+        'day' => 1,
+        'time_preset_id' => null,
+    ]);
+
+    $report = app(ScheduleGenerator::class)->generate($group, [$proctor->id]);
+
+    expect($report['unplaced'])->toBeEmpty();
+    expect($report['placed'][0]['start_time'])->toBe('09:00:00');
+});
+
+test('subjects are reported as missing slot when no preset exists for the day', function () {
+    $grade = GradeLevel::factory()->create();
+    $section = generatorSectionFor($grade);
+
+    $subject = Subject::factory()->create(['grade_level_id' => $grade->id]);
+    $subjectTeacher = Teacher::factory()->create();
+    Teacher::factory()->create();
+
+    assignTeacher($section, $subject, $subjectTeacher);
+
+    $group = ScheduleGroup::factory()->create([
+        'time_preset_id' => null,
+        'days' => 1,
+        'exams_per_day' => 1,
+    ]);
+    $group->sections()->attach($section);
+    $group->subjects()->attach($subject);
+
+    $report = app(ScheduleGenerator::class)->generate($group);
+
+    expect($report['placed'])->toBeEmpty();
+    expect($report['unplaced'])->toHaveCount(1);
+    expect($report['unplaced'][0]['reason_code'])->toBe('missing_slot');
+});
+
+test('proctor balancing counts distinct busy slots, not section assignments', function () {
+    $grade = GradeLevel::factory()->create();
+
+    $sections = collect(range(1, 3))
+        ->map(fn (): Section => generatorSectionFor($grade));
+
+    $sharedSubject = Subject::factory()->create(['grade_level_id' => $grade->id]);
+    $firstSubject = Subject::factory()->create(['grade_level_id' => $grade->id]);
+    $secondSubject = Subject::factory()->create(['grade_level_id' => $grade->id]);
+
+    // The shared subject teacher handles one subject across three sections at
+    // the same time: one teaching busy slot, not three.
+    $sharedTeacher = Teacher::factory()->create();
+    $firstProctor = Teacher::factory()->create();
+    $secondProctor = Teacher::factory()->create();
+
+    foreach ($sections as $section) {
+        assignTeacher($section, $sharedSubject, $sharedTeacher);
+    }
+
+    assignTeacher($sections[0], $firstSubject, $firstProctor);
+    assignTeacher($sections[0], $secondSubject, $secondProctor);
+
+    $preset = generatorPreset(3);
+
+    $group = ScheduleGroup::factory()->create([
+        'time_preset_id' => $preset->id,
+        'days' => 1,
+        'exams_per_day' => 3,
+        'max_proctors_per_teacher' => 3,
+    ]);
+    $group->sections()->attach($sections->pluck('id'));
+    $group->subjects()->attach([
+        $sharedSubject->id => ['sort_order' => 0],
+        $firstSubject->id => ['sort_order' => 1],
+        $secondSubject->id => ['sort_order' => 2],
+    ]);
+
+    $report = app(ScheduleGenerator::class)->generate($group, [$sharedTeacher->id, $firstProctor->id, $secondProctor->id]);
+
+    $firstPlacement = collect($report['placed'])
+        ->firstWhere(fn (array $entry): bool => (int) $entry['subject_id'] === (int) $firstSubject->id);
+
+    expect($firstPlacement)->not->toBeNull();
+    expect($firstPlacement['proctor_id'])->toBe($sharedTeacher->id);
+});

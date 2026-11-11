@@ -78,8 +78,14 @@ const subjectsByGrade = (group) => {
     return map;
 };
 
-const timeSlotsForGrade = (group, gradeId) => {
-    const slots = group.time_preset?.slots ?? [];
+const presetForDay = (group, day) => {
+    const override = (group.day_presets ?? []).find((entry) => Number(entry.day) === Number(day));
+
+    return override?.time_preset ?? group.time_preset ?? null;
+};
+
+const timeSlotsForGrade = (group, day, gradeId) => {
+    const slots = presetForDay(group, day)?.slots ?? [];
     const specific = slots
         .filter((slot) => slot.grade_level_id !== null && Number(slot.grade_level_id) === Number(gradeId))
         .sort((a, b) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0));
@@ -117,7 +123,7 @@ const buildBlocks = (group, day) => {
         }
 
         const subjects = subjectsByGradeMap.get(gradeId) ?? [];
-        const slots = timeSlotsForGrade(group, gradeId);
+        const slots = timeSlotsForGrade(group, day, gradeId);
         const subjectGroups = [];
 
         for (let period = 0; period < examsPerDay; period++) {

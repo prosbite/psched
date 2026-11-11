@@ -37,6 +37,14 @@ class ScheduleGroup extends Model
     }
 
     /**
+     * @return HasMany<ScheduleGroupDayPreset, $this>
+     */
+    public function dayPresets(): HasMany
+    {
+        return $this->hasMany(ScheduleGroupDayPreset::class)->orderBy('day');
+    }
+
+    /**
      * @return BelongsTo<SchoolYear, $this>
      */
     public function schoolYear(): BelongsTo

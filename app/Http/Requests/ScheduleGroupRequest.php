@@ -31,6 +31,8 @@ class ScheduleGroupRequest extends FormRequest
             'school_year_id' => ['required', 'integer', Rule::exists('school_years', 'id')],
             'quarter_id' => ['required', 'integer', Rule::exists('quarters', 'id')],
             'max_proctors_per_teacher' => ['required', 'integer', 'min:0', 'max:20'],
+            'day_presets' => ['array'],
+            'day_presets.*' => ['nullable', 'integer', Rule::exists('time_presets', 'id')],
         ];
     }
 }

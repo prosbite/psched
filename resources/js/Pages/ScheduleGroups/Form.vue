@@ -15,6 +15,16 @@ const props = defineProps({
     quarters: { type: Array, required: true },
 });
 
+const dayPresetValues = () => {
+    const map = {};
+
+    for (const preset of props.group?.day_presets ?? []) {
+        map[Number(preset.day)] = preset.time_preset_id ?? '';
+    }
+
+    return map;
+};
+
 const form = useForm({
     title: props.group?.title ?? '',
     description: props.group?.description ?? '',
@@ -24,6 +34,7 @@ const form = useForm({
     school_year_id: props.group?.school_year_id ?? '',
     quarter_id: props.group?.quarter_id ?? '',
     max_proctors_per_teacher: props.group?.max_proctors_per_teacher ?? 2,
+    day_presets: dayPresetValues(),
 });
 
 const submit = () => {
@@ -94,7 +105,7 @@ const submit = () => {
 
             <div class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-4">
                 <div>
-                    <InputLabel for="time_preset_id" value="Time Preset" />
+                    <InputLabel for="time_preset_id" value="Default Time Preset" />
                     <select
                         id="time_preset_id"
                         v-model="form.time_preset_id"
@@ -145,6 +156,29 @@ const submit = () => {
                         required
                     />
                     <InputError class="mt-2" :message="form.errors.max_proctors_per_teacher" />
+                </div>
+            </div>
+
+            <div class="mt-4">
+                <InputLabel value="Per-day presets" />
+                <p class="mt-1 text-xs text-gray-500">
+                    Leave a day on "Use default" to use the default preset above.
+                </p>
+                <div class="mt-2 grid grid-cols-1 gap-4 sm:grid-cols-3">
+                    <div v-for="day in (Number(form.days) || 1)" :key="day">
+                        <InputLabel :for="`day_preset_${day}`" :value="`Day ${day} preset`" />
+                        <select
+                            :id="`day_preset_${day}`"
+                            v-model="form.day_presets[day]"
+                            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                        >
+                            <option value="">Use default</option>
+                            <option v-for="preset in timePresets" :key="preset.id" :value="preset.id">
+                                {{ preset.name }} ({{ preset.slots_count }} slots)
+                            </option>
+                        </select>
+                        <InputError class="mt-2" :message="form.errors[`day_presets.${day}`]" />
+                    </div>
                 </div>
             </div>
 
