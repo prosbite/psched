@@ -160,6 +160,123 @@ test('a genuinely overlapped proctor is still rejected when the subject teacher 
     expect($this->checker->conflicts($existing, $candidate, 2, false))->not->toBeEmpty();
 });
 
+test('the same exam may repeat its subject teacher across sections when the subject ids match', function () {
+    $existing = [conflictEntry([
+        'section_id' => 1,
+        'subject_id' => 5,
+        'subject_teacher_id' => 10,
+        'proctor_id' => 20,
+    ])];
+
+    $candidate = conflictEntry([
+        'section_id' => 2,
+        'subject_id' => 5,
+        'subject_teacher_id' => 10,
+        'proctor_id' => 21,
+    ]);
+
+    expect($this->checker->hasConflictingTeacher($existing, $candidate))->toBeFalse();
+});
+
+test('a non-elective exam may not share a proctor across sections of the same subject', function () {
+    $existing = [conflictEntry([
+        'section_id' => 1,
+        'subject_id' => 5,
+        'subject_teacher_id' => 10,
+        'proctor_id' => 20,
+    ])];
+
+    $candidate = conflictEntry([
+        'section_id' => 2,
+        'subject_id' => 5,
+        'subject_teacher_id' => 10,
+        'proctor_id' => 20,
+    ]);
+
+    expect($this->checker->hasConflictingTeacher($existing, $candidate))->toBeTrue();
+});
+
+test('a teacher may not be the subject teacher of two different subjects at the same time', function () {
+    $existing = [conflictEntry([
+        'section_id' => 1,
+        'subject_id' => 5,
+        'subject_teacher_id' => 10,
+        'proctor_id' => 20,
+    ])];
+
+    $candidate = conflictEntry([
+        'section_id' => 2,
+        'subject_id' => 6,
+        'subject_teacher_id' => 10,
+        'proctor_id' => 21,
+    ]);
+
+    expect($this->checker->hasConflictingTeacher($existing, $candidate))->toBeTrue();
+});
+
+test('a candidate proctor who is teaching another subject at the same time conflicts', function () {
+    $existing = [conflictEntry([
+        'section_id' => 1,
+        'subject_id' => 5,
+        'subject_teacher_id' => 10,
+        'proctor_id' => 20,
+    ])];
+
+    $candidate = conflictEntry([
+        'section_id' => 2,
+        'subject_id' => 6,
+        'subject_teacher_id' => 30,
+        'proctor_id' => 10,
+    ]);
+
+    expect($this->checker->hasConflictingTeacher($existing, $candidate))->toBeTrue();
+});
+
+test('a self-proctored elective may repeat across sections of the same subject', function () {
+    $existing = [conflictEntry([
+        'section_id' => 1,
+        'subject_id' => 5,
+        'subject_teacher_id' => 10,
+        'proctor_id' => 10,
+    ])];
+
+    $candidate = conflictEntry([
+        'section_id' => 2,
+        'subject_id' => 5,
+        'subject_teacher_id' => 10,
+        'proctor_id' => 10,
+    ]);
+
+    expect($this->checker->hasConflictingTeacher($existing, $candidate))->toBeFalse();
+});
+
+test('non-overlapping or cross-day entries never conflict a teacher', function () {
+    $existing = [conflictEntry([
+        'day' => 1,
+        'subject_id' => 5,
+        'subject_teacher_id' => 10,
+    ])];
+
+    $backToBack = conflictEntry([
+        'day' => 1,
+        'section_id' => 2,
+        'subject_id' => 6,
+        'subject_teacher_id' => 10,
+        'start_time' => '09:00:00',
+        'end_time' => '10:00:00',
+    ]);
+
+    $nextDay = conflictEntry([
+        'day' => 2,
+        'section_id' => 2,
+        'subject_id' => 6,
+        'subject_teacher_id' => 10,
+    ]);
+
+    expect($this->checker->hasConflictingTeacher($existing, $backToBack))->toBeFalse();
+    expect($this->checker->hasConflictingTeacher($existing, $nextDay))->toBeFalse();
+});
+
 test('the proctor cap is still enforced when the subject teacher check is disabled', function () {
     $existing = [
         conflictEntry(['section_id' => 1, 'proctor_id' => 20, 'start_time' => '07:00:00', 'end_time' => '08:00:00']),

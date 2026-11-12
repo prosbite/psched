@@ -916,6 +916,279 @@ test('the proctoring exemption resets the next day', function () {
     expect($unplaced->pluck('reason_code')->unique()->all())->toBe(['no_proctor']);
 });
 
+test('an exam whose subject teacher is already teaching another subject is left unplaced', function () {
+    $gradeSeven = GradeLevel::factory()->create(['grade_level' => '7']);
+    $gradeTen = GradeLevel::factory()->create(['grade_level' => '10']);
+
+    $sectionSeven = generatorSectionFor($gradeSeven);
+    $sectionTen = generatorSectionFor($gradeTen);
+
+    $subjectSeven = Subject::factory()->create([
+        'grade_level_id' => $gradeSeven->id,
+        'subject_name' => 'Grade Seven Subject',
+    ]);
+    $subjectTen = Subject::factory()->create([
+        'grade_level_id' => $gradeTen->id,
+        'subject_name' => 'Grade Ten Subject',
+    ]);
+
+    $sharedTeacher = Teacher::factory()->create();
+    $proctor = Teacher::factory()->create();
+
+    assignTeacher($sectionSeven, $subjectSeven, $sharedTeacher);
+    assignTeacher($sectionTen, $subjectTen, $sharedTeacher);
+
+    $preset = generatorPreset(1);
+
+    $group = ScheduleGroup::factory()->create([
+        'time_preset_id' => $preset->id,
+        'days' => 1,
+        'exams_per_day' => 1,
+    ]);
+    $group->sections()->attach([$sectionSeven->id, $sectionTen->id]);
+    $group->subjects()->attach([
+        $subjectSeven->id => ['sort_order' => 0],
+        $subjectTen->id => ['sort_order' => 1],
+    ]);
+
+    $report = app(ScheduleGenerator::class)->generate($group, [$proctor->id]);
+
+    expect($report['placed'])->toHaveCount(1);
+    expect($report['unplaced'])->toHaveCount(1);
+    expect($report['unplaced'][0]['subject_id'])->toBe($subjectTen->id);
+    expect($report['unplaced'][0]['reason_code'])->toBe('teacher_conflict');
+    expect($report['unplaced'][0]['reason'])->toContain('already teaching');
+});
+
+test('the same subject teacher may repeat across sections of the same subject', function () {
+    $grade = GradeLevel::factory()->create();
+    $sectionA = generatorSectionFor($grade);
+    $sectionB = generatorSectionFor($grade);
+
+    $subject = Subject::factory()->create(['grade_level_id' => $grade->id]);
+
+    $subjectTeacher = Teacher::factory()->create();
+    $firstProctor = Teacher::factory()->create();
+    $secondProctor = Teacher::factory()->create();
+
+    assignTeacher($sectionA, $subject, $subjectTeacher);
+    assignTeacher($sectionB, $subject, $subjectTeacher);
+
+    $preset = generatorPreset(1);
+
+    $group = ScheduleGroup::factory()->create([
+        'time_preset_id' => $preset->id,
+        'days' => 1,
+        'exams_per_day' => 1,
+    ]);
+    $group->sections()->attach([$sectionA->id, $sectionB->id]);
+    $group->subjects()->attach($subject);
+
+    $report = app(ScheduleGenerator::class)->generate($group, [$firstProctor->id, $secondProctor->id]);
+
+    expect($report['unplaced'])->toBeEmpty();
+    expect($report['placed'])->toHaveCount(2);
+    expect(collect($report['placed'])->pluck('subject_teacher_id')->unique()->all())->toBe([$subjectTeacher->id]);
+});
+
+test('a teacher who is teaching another subject is not selected as proctor', function () {
+    $gradeA = GradeLevel::factory()->create(['grade_level' => '7']);
+    $gradeB = GradeLevel::factory()->create(['grade_level' => '10']);
+
+    $sectionA = generatorSectionFor($gradeA);
+    $sectionB = generatorSectionFor($gradeB);
+
+    $subjectA = Subject::factory()->create(['grade_level_id' => $gradeA->id]);
+    $subjectB = Subject::factory()->create(['grade_level_id' => $gradeB->id]);
+
+    $teacherA = Teacher::factory()->create();
+    $teacherB = Teacher::factory()->create();
+    $otherProctorOne = Teacher::factory()->create();
+    $otherProctorTwo = Teacher::factory()->create();
+
+    assignTeacher($sectionA, $subjectA, $teacherA);
+    assignTeacher($sectionB, $subjectB, $teacherB);
+
+    $preset = generatorPreset(1);
+
+    $group = ScheduleGroup::factory()->create([
+        'time_preset_id' => $preset->id,
+        'days' => 1,
+        'exams_per_day' => 1,
+    ]);
+    $group->sections()->attach([$sectionA->id, $sectionB->id]);
+    $group->subjects()->attach([
+        $subjectA->id => ['sort_order' => 0],
+        $subjectB->id => ['sort_order' => 1],
+    ]);
+
+    $report = app(ScheduleGenerator::class)->generate($group, [
+        $teacherB->id,
+        $otherProctorOne->id,
+        $otherProctorTwo->id,
+    ]);
+
+    expect($report['unplaced'])->toBeEmpty();
+    expect($report['placed'])->toHaveCount(2);
+    expect(collect($report['placed'])->pluck('proctor_id')->contains($teacherB->id))->toBeFalse();
+});
+
+test('two electives sharing a subject teacher at the same time leave one unplaced', function () {
+    $gradeSeven = GradeLevel::factory()->create(['grade_level' => '7']);
+    $gradeTen = GradeLevel::factory()->create(['grade_level' => '10']);
+
+    $sectionSeven = generatorSectionFor($gradeSeven);
+    $sectionTen = generatorSectionFor($gradeTen);
+
+    $electiveSeven = Subject::factory()->create([
+        'grade_level_id' => $gradeSeven->id,
+        'is_elective' => true,
+        'subject_name' => 'Elective Seven',
+    ]);
+    $electiveTen = Subject::factory()->create([
+        'grade_level_id' => $gradeTen->id,
+        'is_elective' => true,
+        'subject_name' => 'Elective Ten',
+    ]);
+
+    $sharedTeacher = Teacher::factory()->create();
+
+    assignTeacher($sectionSeven, $electiveSeven, $sharedTeacher);
+    assignTeacher($sectionTen, $electiveTen, $sharedTeacher);
+
+    $preset = generatorPreset(1);
+
+    $group = ScheduleGroup::factory()->create([
+        'time_preset_id' => $preset->id,
+        'days' => 1,
+        'exams_per_day' => 1,
+    ]);
+    $group->sections()->attach([$sectionSeven->id, $sectionTen->id]);
+    $group->subjects()->attach([
+        $electiveSeven->id => ['sort_order' => 0],
+        $electiveTen->id => ['sort_order' => 1],
+    ]);
+
+    $report = app(ScheduleGenerator::class)->generate($group, [$sharedTeacher->id]);
+
+    expect($report['placed'])->toHaveCount(1);
+    expect($report['unplaced'])->toHaveCount(1);
+    expect($report['unplaced'][0]['reason_code'])->toBe('teacher_conflict');
+    expect($report['unplaced'][0]['reason'])->toContain('already teaching');
+});
+
+test('the same elective may repeat across sections at the same time', function () {
+    $grade = GradeLevel::factory()->create();
+    $sectionA = generatorSectionFor($grade);
+    $sectionB = generatorSectionFor($grade);
+
+    $elective = Subject::factory()->create([
+        'grade_level_id' => $grade->id,
+        'is_elective' => true,
+    ]);
+
+    $subjectTeacher = Teacher::factory()->create();
+
+    assignTeacher($sectionA, $elective, $subjectTeacher);
+    assignTeacher($sectionB, $elective, $subjectTeacher);
+
+    $preset = generatorPreset(1);
+
+    $group = ScheduleGroup::factory()->create([
+        'time_preset_id' => $preset->id,
+        'days' => 1,
+        'exams_per_day' => 1,
+    ]);
+    $group->sections()->attach([$sectionA->id, $sectionB->id]);
+    $group->subjects()->attach($elective);
+
+    $report = app(ScheduleGenerator::class)->generate($group, [$subjectTeacher->id]);
+
+    expect($report['unplaced'])->toBeEmpty();
+    expect($report['placed'])->toHaveCount(2);
+});
+
+test('grade specific slots that overlap in real time conflict the same teacher', function () {
+    $gradeSeven = GradeLevel::factory()->create(['grade_level' => '7']);
+    $gradeTen = GradeLevel::factory()->create(['grade_level' => '10']);
+
+    $sectionSeven = generatorSectionFor($gradeSeven);
+    $sectionTen = generatorSectionFor($gradeTen);
+
+    $subjectSeven = Subject::factory()->create(['grade_level_id' => $gradeSeven->id]);
+    $subjectTen = Subject::factory()->create(['grade_level_id' => $gradeTen->id]);
+
+    $sharedTeacher = Teacher::factory()->create();
+    $proctor = Teacher::factory()->create();
+
+    assignTeacher($sectionSeven, $subjectSeven, $sharedTeacher);
+    assignTeacher($sectionTen, $subjectTen, $sharedTeacher);
+
+    $preset = TimePreset::factory()->create();
+    $preset->slots()->createMany([
+        ['start_time' => '08:00:00', 'end_time' => '09:00:00', 'sort_order' => 0],
+        ['grade_level_id' => $gradeTen->id, 'start_time' => '08:30:00', 'end_time' => '09:30:00', 'sort_order' => 0],
+    ]);
+
+    $group = ScheduleGroup::factory()->create([
+        'time_preset_id' => $preset->id,
+        'days' => 1,
+        'exams_per_day' => 1,
+    ]);
+    $group->sections()->attach([$sectionSeven->id, $sectionTen->id]);
+    $group->subjects()->attach([
+        $subjectSeven->id => ['sort_order' => 0],
+        $subjectTen->id => ['sort_order' => 1],
+    ]);
+
+    $report = app(ScheduleGenerator::class)->generate($group, [$proctor->id]);
+
+    expect($report['placed'])->toHaveCount(1);
+    expect($report['unplaced'])->toHaveCount(1);
+    expect($report['unplaced'][0]['reason_code'])->toBe('teacher_conflict');
+});
+
+test('the generate endpoint persists a teacher conflict as unplaced', function () {
+    $admin = User::factory()->create(['role' => UserRole::Admin]);
+
+    $gradeSeven = GradeLevel::factory()->create(['grade_level' => '7']);
+    $gradeTen = GradeLevel::factory()->create(['grade_level' => '10']);
+
+    $sectionSeven = generatorSectionFor($gradeSeven);
+    $sectionTen = generatorSectionFor($gradeTen);
+
+    $subjectSeven = Subject::factory()->create(['grade_level_id' => $gradeSeven->id]);
+    $subjectTen = Subject::factory()->create(['grade_level_id' => $gradeTen->id]);
+
+    $sharedTeacher = Teacher::factory()->create();
+    $proctor = Teacher::factory()->create();
+
+    assignTeacher($sectionSeven, $subjectSeven, $sharedTeacher);
+    assignTeacher($sectionTen, $subjectTen, $sharedTeacher);
+
+    $preset = generatorPreset(1);
+
+    $group = ScheduleGroup::factory()->create([
+        'time_preset_id' => $preset->id,
+        'days' => 1,
+        'exams_per_day' => 1,
+    ]);
+    $group->sections()->attach([$sectionSeven->id, $sectionTen->id]);
+    $group->subjects()->attach([
+        $subjectSeven->id => ['sort_order' => 0],
+        $subjectTen->id => ['sort_order' => 1],
+    ]);
+
+    $this->actingAs($admin)
+        ->post(route('schedule-groups.generate', $group), [
+            'proctors' => [$proctor->id],
+        ])
+        ->assertRedirect(route('schedule-groups.show', $group));
+
+    expect($group->schedules()->count())->toBe(1);
+    expect($group->unplaced()->where('reason_code', 'teacher_conflict')->count())->toBe(1);
+});
+
 test('proctorship is spread so every eligible teacher reaches the minimum', function () {
     $grade = GradeLevel::factory()->create();
     $sections = collect([generatorSectionFor($grade), generatorSectionFor($grade)]);

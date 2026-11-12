@@ -79,11 +79,97 @@ class ConflictChecker
         return [
             'day' => (int) ($schedule->day ?? 1),
             'section_id' => $schedule->section_id === null ? null : (int) $schedule->section_id,
+            'subject_id' => $schedule->subject_id === null ? null : (int) $schedule->subject_id,
             'subject_teacher_id' => $schedule->subject_teacher_id === null ? null : (int) $schedule->subject_teacher_id,
             'proctor_id' => $schedule->proctor_id === null ? null : (int) $schedule->proctor_id,
             'start_time' => $schedule->start_time,
             'end_time' => $schedule->end_time,
         ];
+    }
+
+    /**
+     * Determine whether any existing entry double-books a teacher of the candidate.
+     *
+     * Unlike {@see conflicts()}, this is subject-aware: a subject teacher may
+     * repeat across sections of the same exam at the same time, but never
+     * across different subjects, and a proctor may not already be teaching.
+     *
+     * @param  array<int, array<string, mixed>>  $existing
+     * @param  array<string, mixed>  $candidate
+     */
+    public function hasConflictingTeacher(array $existing, array $candidate): bool
+    {
+        foreach ($existing as $entry) {
+            if ($this->sameDay($entry, $candidate)
+                && $this->overlaps($entry, $candidate)
+                && $this->teacherRolesConflict($entry, $candidate)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Determine whether two overlapping entries double-book a teacher.
+     *
+     * @param  array<string, mixed>  $first
+     * @param  array<string, mixed>  $second
+     */
+    private function teacherRolesConflict(array $first, array $second): bool
+    {
+        $firstSubjectTeacher = $first['subject_teacher_id'] ?? null;
+        $firstProctor = $first['proctor_id'] ?? null;
+        $secondSubjectTeacher = $second['subject_teacher_id'] ?? null;
+        $secondProctor = $second['proctor_id'] ?? null;
+
+        $firstSubject = $first['subject_id'] ?? null;
+        $secondSubject = $second['subject_id'] ?? null;
+
+        $sameExam = $firstSubject !== null
+            && $secondSubject !== null
+            && (int) $firstSubject === (int) $secondSubject
+            && $firstSubjectTeacher !== null
+            && $secondSubjectTeacher !== null
+            && (int) $firstSubjectTeacher === (int) $secondSubjectTeacher;
+
+        $firstSelfProctored = $firstSubjectTeacher !== null
+            && $firstProctor !== null
+            && (int) $firstSubjectTeacher === (int) $firstProctor;
+
+        $secondSelfProctored = $secondSubjectTeacher !== null
+            && $secondProctor !== null
+            && (int) $secondSubjectTeacher === (int) $secondProctor;
+
+        if ($firstSubjectTeacher !== null
+            && $secondSubjectTeacher !== null
+            && (int) $firstSubjectTeacher === (int) $secondSubjectTeacher
+            && ! $sameExam) {
+            return true;
+        }
+
+        if ($secondSubjectTeacher !== null
+            && $firstProctor !== null
+            && (int) $secondSubjectTeacher === (int) $firstProctor
+            && ! ($sameExam && $firstSelfProctored)) {
+            return true;
+        }
+
+        if ($secondProctor !== null
+            && $firstSubjectTeacher !== null
+            && (int) $secondProctor === (int) $firstSubjectTeacher
+            && ! ($sameExam && $secondSelfProctored)) {
+            return true;
+        }
+
+        if ($secondProctor !== null
+            && $firstProctor !== null
+            && (int) $secondProctor === (int) $firstProctor
+            && ! ($sameExam && $firstSelfProctored && $secondSelfProctored)) {
+            return true;
+        }
+
+        return false;
     }
 
     /**

@@ -83,6 +83,7 @@ class ScheduleRequest extends FormRequest
             $candidate = [
                 'day' => (int) $this->input('day'),
                 'section_id' => (int) $this->input('section_id'),
+                'subject_id' => (int) $this->input('subject_id'),
                 'subject_teacher_id' => (int) $subjectTeacherId,
                 'proctor_id' => $isElective ? (int) $subjectTeacherId : (int) $this->input('proctor_id'),
                 'start_time' => (string) $this->input('start_time'),
@@ -91,7 +92,14 @@ class ScheduleRequest extends FormRequest
 
             $maxProctors = (int) $group->max_proctors_per_teacher;
 
+            $subjectTeacherCandidate = $candidate;
+            unset($subjectTeacherCandidate['proctor_id']);
+
             if ($isElective) {
+                if ($checker->hasConflictingTeacher($existing, $subjectTeacherCandidate)) {
+                    $validator->errors()->add('proctor_id', 'The subject teacher for this elective is already teaching another subject at this time.');
+                }
+
                 // Electives are self-proctored: only section overlaps matter,
                 // mirroring ScheduleGenerator::placeElective().
                 $check = $candidate;
@@ -99,6 +107,10 @@ class ScheduleRequest extends FormRequest
 
                 $reasons = $checker->conflicts($existing, $check, $maxProctors);
             } else {
+                if ($checker->hasConflictingTeacher($existing, $subjectTeacherCandidate)) {
+                    $validator->errors()->add('proctor_id', 'The subject teacher for this exam is already teaching another subject at this time.');
+                }
+
                 $reasons = $checker->conflicts($existing, $candidate, $maxProctors, false);
             }
 

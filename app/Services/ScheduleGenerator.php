@@ -33,6 +33,11 @@ use Illuminate\Support\Collection;
  *
  * The subject teacher for each (section, subject) pair is fixed by the
  * section_subject_teacher mapping; only the proctor is chosen by the solver.
+ * A subject teacher may repeat across sections of the same subject at the same
+ * time, but not across different subjects: an exam whose teacher is already
+ * teaching another subject at that real time is reported as unplaced instead
+ * of double-booking them. Proctors who are teaching any planned exam at that
+ * time are skipped.
  */
 class ScheduleGenerator
 {
@@ -91,6 +96,10 @@ class ScheduleGenerator
             ->values();
 
         $plan = $this->planner->plan($group, $sections, $subjects, $days, $examsPerDay);
+
+        // Teaching work is fixed by the timetable. Collecting it up front lets
+        // the generator avoid choosing a proctor who is teaching instead.
+        $teachingPlan = $this->teachingPlan($plan, $sectionsByGrade, $assignments);
 
         $proctors = $this->proctorCandidates($proctorIds);
 
@@ -161,17 +170,23 @@ class ScheduleGenerator
                             continue;
                         }
 
+                        $base = $this->baseEntry($group, $section, $subject, $subjectTeacherId, $day, $slot);
+
                         if ($subject->is_elective) {
-                            $entry = $this->placeElective(
-                                $group,
-                                $section,
-                                $subject,
-                                $subjectTeacherId,
-                                $day,
-                                $slot,
-                                $placed,
-                                $maxProctors,
-                            );
+                            if ($this->conflicts->hasConflictingTeacher($placed, $base)) {
+                                $unplaced[] = $this->unplacedEntry(
+                                    $day,
+                                    $section,
+                                    $subject,
+                                    'teacher_conflict',
+                                    sprintf('The subject teacher for the elective "%s" is already teaching another subject at this time.', $subject->subject_name),
+                                    $slot,
+                                );
+
+                                continue;
+                            }
+
+                            $entry = $this->placeElective($base, $placed, $maxProctors);
 
                             if ($entry === null) {
                                 $unplaced[] = $this->unplacedEntry(
@@ -193,18 +208,28 @@ class ScheduleGenerator
                             continue;
                         }
 
+                        if ($this->conflicts->hasConflictingTeacher($placed, $base)) {
+                            $unplaced[] = $this->unplacedEntry(
+                                $day,
+                                $section,
+                                $subject,
+                                'teacher_conflict',
+                                sprintf('The subject teacher for "%s" is already teaching another subject at this time. Reorder the subjects or adjust the time preset.', $subject->subject_name),
+                                $slot,
+                            );
+
+                            continue;
+                        }
+
                         $entry = $this->place(
-                            $group,
-                            $section,
-                            $subject,
+                            $base,
                             $subjectTeacherId,
-                            $day,
-                            $slot,
                             $dayProctors,
                             $placed,
                             $loadTotals,
                             $proctorTotals,
                             $maxProctors,
+                            $teachingPlan,
                         );
 
                         if ($entry === null) {
@@ -233,6 +258,31 @@ class ScheduleGenerator
     }
 
     /**
+     * Build the fixed portion of a planned exam entry.
+     *
+     * @return array<string, mixed>
+     */
+    private function baseEntry(
+        ScheduleGroup $group,
+        Section $section,
+        Subject $subject,
+        int $subjectTeacherId,
+        int $day,
+        TimePresetSlot $slot,
+    ): array {
+        return [
+            'schedule_group_id' => (int) $group->id,
+            'day' => $day,
+            'section_id' => (int) $section->id,
+            'subject_id' => (int) $subject->id,
+            'subject_teacher_id' => $subjectTeacherId,
+            'start_time' => $slot->start_time,
+            'end_time' => $slot->end_time,
+            'slot_id' => (int) $slot->id,
+        ];
+    }
+
+    /**
      * Attempt to place a single exam in its fixed slot using the fairest
      * available proctor, returning null when no proctor can take it.
      *
@@ -243,50 +293,38 @@ class ScheduleGenerator
      * @param  array<int, array<string, mixed>>  $placed
      * @param  array<int, int>  $loadTotals
      * @param  array<int, int>  $proctorTotals
+     * @param  array<int, array<string, mixed>>  $teachingPlan
      * @return array<string, mixed>|null
      */
     private function place(
-        ScheduleGroup $group,
-        Section $section,
-        Subject $subject,
+        array $base,
         int $subjectTeacherId,
-        int $day,
-        TimePresetSlot $slot,
         array $proctors,
         array $placed,
         array $loadTotals,
         array $proctorTotals,
         int $maxProctors,
+        array $teachingPlan,
     ): ?array {
-        $base = [
-            'schedule_group_id' => (int) $group->id,
-            'day' => $day,
-            'section_id' => (int) $section->id,
-            'subject_id' => (int) $subject->id,
-            'subject_teacher_id' => $subjectTeacherId,
-            'start_time' => $slot->start_time,
-            'end_time' => $slot->end_time,
-        ];
-
-        // The subject teacher is fixed by the timetable and may legitimately
-        // repeat across sections of a grade at the same time (the grid merges
-        // them), so the proctor check omits that role and only verifies that
-        // the chosen proctor is not already engaged as any entry's teacher.
-        $check = $base;
-        unset($check['subject_teacher_id']);
-
         foreach ($this->orderByFairness($proctors, $proctorTotals, $loadTotals) as $proctorId) {
             if ($proctorId === $subjectTeacherId) {
                 continue;
             }
 
-            $candidate = $check + ['proctor_id' => $proctorId];
+            $candidate = $base + ['proctor_id' => $proctorId];
 
-            if (! $this->conflicts->isConflictFree($placed, $candidate, $maxProctors)) {
+            $proctorCheck = $candidate;
+            $proctorCheck['subject_teacher_id'] = null;
+
+            if ($this->conflicts->hasConflictingTeacher($teachingPlan, $proctorCheck)) {
                 continue;
             }
 
-            return $base + ['proctor_id' => $proctorId, 'slot_id' => (int) $slot->id];
+            if (! $this->conflicts->isConflictFree($placed, $candidate, $maxProctors, false)) {
+                continue;
+            }
+
+            return $candidate;
         }
 
         return null;
@@ -295,43 +333,95 @@ class ScheduleGenerator
     /**
      * Place an elective exam, using its subject teacher as the proctor.
      *
-     * Subject teachers may repeat across sections of the same grade at the
-     * same time (the grid merges those rows), so the teacher/proctor role is
-     * excluded from the conflict check; only section overlaps are considered.
+     * The subject teacher's own availability is checked by the caller; here
+     * only section overlaps are considered, and no proctor budget is used.
      *
      * @param  array<int, array<string, mixed>>  $placed
      * @return array<string, mixed>|null
      */
-    private function placeElective(
-        ScheduleGroup $group,
-        Section $section,
-        Subject $subject,
-        int $subjectTeacherId,
-        int $day,
-        TimePresetSlot $slot,
-        array $placed,
-        int $maxProctors,
-    ): ?array {
-        $entry = [
-            'schedule_group_id' => (int) $group->id,
-            'day' => $day,
-            'section_id' => (int) $section->id,
-            'subject_id' => (int) $subject->id,
-            'subject_teacher_id' => $subjectTeacherId,
-            'proctor_id' => $subjectTeacherId,
-            'start_time' => $slot->start_time,
-            'end_time' => $slot->end_time,
-            'slot_id' => (int) $slot->id,
-        ];
-
-        $check = $entry;
-        unset($check['subject_teacher_id'], $check['proctor_id']);
+    private function placeElective(array $base, array $placed, int $maxProctors): ?array
+    {
+        $check = $base;
+        unset($check['subject_teacher_id']);
 
         if (! $this->conflicts->isConflictFree($placed, $check, $maxProctors)) {
             return null;
         }
 
-        return $entry;
+        return $base + ['proctor_id' => $base['subject_teacher_id']];
+    }
+
+    /**
+     * Build the deduped teaching commitments of the whole plan.
+     *
+     * Each entry carries the subject teacher in the subject-teacher role with
+     * no proctor, so the checker can tell a legitimate repeat of the same exam
+     * from a teacher who is booked on a different subject.
+     *
+     * @param  array<int, array<int, array<int, array{subject: Subject, period: int|null, slot: TimePresetSlot|null}>>>  $plan
+     * @param  Collection<int, Collection<int, Section>>  $sectionsByGrade
+     * @param  array<string, int|null>  $assignments
+     * @return array<int, array<string, mixed>>
+     */
+    private function teachingPlan(array $plan, Collection $sectionsByGrade, array $assignments): array
+    {
+        $entries = [];
+        $seen = [];
+
+        foreach ($plan as $day => $grades) {
+            foreach ($grades as $gradeId => $planned) {
+                $gradeSections = $sectionsByGrade->get($gradeId, collect())->values();
+
+                foreach ($planned as $plannedEntry) {
+                    $subject = $plannedEntry['subject'];
+                    $slot = $plannedEntry['slot'];
+
+                    if (! $slot instanceof TimePresetSlot) {
+                        continue;
+                    }
+
+                    foreach ($gradeSections as $section) {
+                        $taskKey = $this->taskKey($section, $subject);
+
+                        if (! array_key_exists($taskKey, $assignments)) {
+                            continue;
+                        }
+
+                        $teacherId = $assignments[$taskKey];
+
+                        if ($teacherId === null) {
+                            continue;
+                        }
+
+                        $teacherId = (int) $teacherId;
+                        $key = implode('|', [
+                            (int) $day,
+                            $teacherId,
+                            (int) $subject->id,
+                            (string) $slot->start_time,
+                            (string) $slot->end_time,
+                        ]);
+
+                        if (isset($seen[$key])) {
+                            continue;
+                        }
+
+                        $seen[$key] = true;
+                        $entries[] = [
+                            'day' => (int) $day,
+                            'section_id' => null,
+                            'subject_id' => (int) $subject->id,
+                            'subject_teacher_id' => $teacherId,
+                            'proctor_id' => null,
+                            'start_time' => $slot->start_time,
+                            'end_time' => $slot->end_time,
+                        ];
+                    }
+                }
+            }
+        }
+
+        return $entries;
     }
 
     /**

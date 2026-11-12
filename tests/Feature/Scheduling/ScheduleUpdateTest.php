@@ -218,6 +218,39 @@ test('updating an elective schedule ignores the submitted proctor and keeps the 
     expect($schedule->fresh()->proctor_id)->toBe($context['teacher']->id);
 });
 
+test('updating to a different subject whose teacher is already teaching is rejected', function () {
+    $admin = User::factory()->create(['role' => UserRole::Admin]);
+    $context = scheduleUpdateContext();
+
+    $otherSubject = Subject::factory()->create([
+        'grade_level_id' => $context['sections'][0]->grade_level_id,
+    ]);
+    $context['group']->subjects()->attach($otherSubject);
+
+    SectionSubjectTeacher::factory()->create([
+        'section_id' => $context['sections'][1]->id,
+        'subject_id' => $otherSubject->id,
+        'teacher_id' => $context['teacher']->id,
+    ]);
+
+    scheduleUpdateEntry($context, 0, $context['proctor']);
+
+    $schedule = scheduleUpdateEntry($context, 1, $context['siblingProctor']);
+
+    $this->actingAs($admin)
+        ->put(route('schedule-groups.schedules.update', [$context['group'], $schedule]), [
+            'day' => 3,
+            'section_id' => $context['sections'][1]->id,
+            'subject_id' => $otherSubject->id,
+            'proctor_id' => $context['freeProctor']->id,
+            'start_time' => '07:00',
+            'end_time' => '08:00',
+        ])
+        ->assertSessionHasErrors('proctor_id');
+
+    expect($schedule->fresh()->subject_id)->toBe($context['subject']->id);
+});
+
 test('the per-day proctor cap is still enforced when updating a schedule', function () {
     $admin = User::factory()->create(['role' => UserRole::Admin]);
     $context = scheduleUpdateContext();
