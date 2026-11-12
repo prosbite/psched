@@ -915,3 +915,49 @@ test('the proctoring exemption resets the next day', function () {
     expect($unplaced->pluck('day')->unique()->all())->toBe([1]);
     expect($unplaced->pluck('reason_code')->unique()->all())->toBe(['no_proctor']);
 });
+
+test('proctorship is spread so every eligible teacher reaches the minimum', function () {
+    $grade = GradeLevel::factory()->create();
+    $sections = collect([generatorSectionFor($grade), generatorSectionFor($grade)]);
+
+    $subjects = collect(range(1, 4))
+        ->map(fn (int $index): Subject => Subject::factory()->create([
+            'grade_level_id' => $grade->id,
+            'subject_name' => 'Subject '.$index,
+        ]));
+
+    $subjectTeacher = Teacher::factory()->create();
+    $proctors = collect(range(1, 4))
+        ->map(fn (): Teacher => Teacher::factory()->create());
+
+    foreach ($subjects as $subject) {
+        foreach ($sections as $section) {
+            assignTeacher($section, $subject, $subjectTeacher);
+        }
+    }
+
+    $preset = generatorPreset(2);
+
+    $group = ScheduleGroup::factory()->create([
+        'time_preset_id' => $preset->id,
+        'days' => 2,
+        'exams_per_day' => 2,
+        'max_proctors_per_teacher' => 2,
+    ]);
+    $group->sections()->attach($sections->pluck('id'));
+    $group->subjects()->attach($subjects->mapWithKeys(fn (Subject $subject, int $index): array => [
+        $subject->id => ['sort_order' => $index],
+    ])->all());
+
+    $report = app(ScheduleGenerator::class)->generate($group, $proctors->pluck('id')->all());
+
+    expect($report['unplaced'])->toBeEmpty();
+    expect($report['placed'])->toHaveCount(8);
+
+    $proctorTotals = collect($report['placed'])
+        ->countBy(fn (array $entry): int => (int) $entry['proctor_id']);
+
+    foreach ($proctors as $proctor) {
+        expect($proctorTotals->get($proctor->id, 0))->toBeGreaterThanOrEqual(2);
+    }
+});

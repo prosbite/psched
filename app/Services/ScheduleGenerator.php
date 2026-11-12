@@ -20,11 +20,12 @@ use Illuminate\Support\Collection;
  * same grade therefore sits it at the same day/period, mirroring the school's
  * assessment grid. Enrollment is the
  * `section_subject_teacher` mapping: a section without a row for a subject is
- * not sitting it and is skipped. Proctors are chosen greedily from the
- * least-loaded candidates (lowest overall busy-slot count, then lowest id),
- * respecting the per-day proctor cap and same-day overlap rules. Teachers who
- * handle two or more distinct subjects on a day are exempt from proctoring on
- * that day only.
+ * not sitting it and is skipped. Proctors are chosen greedily, preferring
+ * teachers below the minimum proctorship target so assignments spread across
+ * the whole duration, then the least-loaded candidates (lowest overall
+ * busy-slot count, then lowest id). The per-day proctor cap and same-day
+ * overlap rules always apply. Teachers who handle two or more distinct subjects
+ * on a day are exempt from proctoring on that day only.
  *
  * Each day may use its own time preset; a day without an override falls back
  * to the group's default preset. Grade-specific slots still override the
@@ -35,6 +36,13 @@ use Illuminate\Support\Collection;
  */
 class ScheduleGenerator
 {
+    /**
+     * Preferred minimum proctor assignments per eligible teacher across the
+     * whole duration. Spread is best-effort: conflicts, per-day caps,
+     * exemption days, and the number of exams can make it unreachable.
+     */
+    private const MIN_PROCTORSHIPS = 2;
+
     public function __construct(
         private readonly ConflictChecker $conflicts,
         private readonly SubjectSlotPlanner $planner,
@@ -95,6 +103,7 @@ class ScheduleGenerator
         // proctor is chosen, so proctors are balanced against the full load
         // they will carry across the whole exam duration.
         $loadTotals = $this->teachingBusyTotals($plan, $sectionsByGrade, $assignments);
+        $proctorTotals = [];
 
         for ($day = 1; $day <= $days; $day++) {
             $dayProctors = array_values(array_diff($proctors, $exemptByDay[$day] ?? []));
@@ -194,6 +203,7 @@ class ScheduleGenerator
                             $dayProctors,
                             $placed,
                             $loadTotals,
+                            $proctorTotals,
                             $maxProctors,
                         );
 
@@ -211,7 +221,9 @@ class ScheduleGenerator
                         }
 
                         $placed[] = $entry;
-                        $loadTotals[(int) $entry['proctor_id']] = ($loadTotals[(int) $entry['proctor_id']] ?? 0) + 1;
+                        $proctorId = (int) $entry['proctor_id'];
+                        $loadTotals[$proctorId] = ($loadTotals[$proctorId] ?? 0) + 1;
+                        $proctorTotals[$proctorId] = ($proctorTotals[$proctorId] ?? 0) + 1;
                     }
                 }
             }
@@ -221,12 +233,16 @@ class ScheduleGenerator
     }
 
     /**
-     * Attempt to place a single exam in its fixed slot using the least-loaded
+     * Attempt to place a single exam in its fixed slot using the fairest
      * available proctor, returning null when no proctor can take it.
+     *
+     * Candidates below the minimum proctorship target are preferred so every
+     * eligible teacher reaches it before anyone takes extra assignments.
      *
      * @param  array<int, int>  $proctors
      * @param  array<int, array<string, mixed>>  $placed
      * @param  array<int, int>  $loadTotals
+     * @param  array<int, int>  $proctorTotals
      * @return array<string, mixed>|null
      */
     private function place(
@@ -239,6 +255,7 @@ class ScheduleGenerator
         array $proctors,
         array $placed,
         array $loadTotals,
+        array $proctorTotals,
         int $maxProctors,
     ): ?array {
         $base = [
@@ -258,7 +275,7 @@ class ScheduleGenerator
         $check = $base;
         unset($check['subject_teacher_id']);
 
-        foreach ($this->orderByLoad($proctors, $loadTotals) as $proctorId) {
+        foreach ($this->orderByFairness($proctors, $proctorTotals, $loadTotals) as $proctorId) {
             if ($proctorId === $subjectTeacherId) {
                 continue;
             }
@@ -493,17 +510,39 @@ class ScheduleGenerator
     }
 
     /**
-     * Order teacher ids by cumulative overall load, then by lowest id.
+     * Order teacher ids so proctorship is spread fairly.
+     *
+     * Teachers below the minimum proctorship target come first, ordered by how
+     * few assignments they have (then by overall load). Once everyone reaches
+     * the target, candidates are ordered by overall load. Lowest id breaks ties.
      *
      * @param  array<int, int>  $ids
+     * @param  array<int, int>  $proctorTotals
      * @param  array<int, int>  $load
      * @return array<int, int>
      */
-    private function orderByLoad(array $ids, array $load): array
+    private function orderByFairness(array $ids, array $proctorTotals, array $load): array
     {
         $ids = array_values(array_unique(array_map('intval', $ids)));
 
-        usort($ids, function (int $a, int $b) use ($load): int {
+        usort($ids, function (int $a, int $b) use ($proctorTotals, $load): int {
+            $countA = $proctorTotals[$a] ?? 0;
+            $countB = $proctorTotals[$b] ?? 0;
+            $belowA = $countA < self::MIN_PROCTORSHIPS;
+            $belowB = $countB < self::MIN_PROCTORSHIPS;
+
+            if ($belowA !== $belowB) {
+                return $belowA ? -1 : 1;
+            }
+
+            if ($belowA) {
+                $countComparison = $countA <=> $countB;
+
+                if ($countComparison !== 0) {
+                    return $countComparison;
+                }
+            }
+
             return (($load[$a] ?? 0) <=> ($load[$b] ?? 0)) ?: ($a <=> $b);
         });
 

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { Head, Link, router, useForm, usePage } from '@inertiajs/vue3';
 import AdminLayout from '@/Layouts/AdminLayout.vue';
 import FlashBanner from '@/Components/FlashBanner.vue';
@@ -177,6 +177,31 @@ const action = (name, label, destructive = false) => {
 };
 
 const selectedProctors = ref([]);
+const teacherView = ref('cards');
+const teacherPanelFullscreen = ref(false);
+
+const toggleTeacherPanelFullscreen = () => {
+    teacherPanelFullscreen.value = !teacherPanelFullscreen.value;
+};
+
+const onFullscreenKeydown = (event) => {
+    if (event.key === 'Escape') {
+        teacherPanelFullscreen.value = false;
+    }
+};
+
+watch(teacherPanelFullscreen, (value) => {
+    document.body.style.overflow = value ? 'hidden' : '';
+});
+
+onMounted(() => {
+    window.addEventListener('keydown', onFullscreenKeydown);
+});
+
+onUnmounted(() => {
+    window.removeEventListener('keydown', onFullscreenKeydown);
+    document.body.style.overflow = '';
+});
 
 const eligibleProctors = computed(() => props.teachers);
 
@@ -231,6 +256,38 @@ const displayTime = (time) => {
 };
 const teacherName = (teacher) => (teacher ? [teacher.firstname, teacher.middlename, teacher.lastname].filter(Boolean).join(' ') : '—');
 
+const teacherTableName = (teacher) => {
+    if (!teacher) {
+        return '—';
+    }
+
+    const last = teacher.lastname ?? '';
+    const first = teacher.firstname ?? '';
+    const middle = String(teacher.middlename ?? '').trim().charAt(0).toUpperCase();
+
+    if (!last) {
+        return [first, teacher.middlename].filter(Boolean).join(' ') || '—';
+    }
+
+    const base = first ? `${last}, ${first}` : last;
+
+    return middle ? `${base} ${middle}.` : base;
+};
+
+const loadRowTime = (row) => `Day ${row.day} · ${displayTime(row.start_time)}–${displayTime(row.end_time)}`;
+
+const loadTypeClass = (type) => {
+    if (type === 'Proctor') {
+        return 'bg-sky-100 text-sky-800';
+    }
+
+    if (type === 'Subject Teacher & Proctor') {
+        return 'bg-purple-100 text-purple-800';
+    }
+
+    return 'bg-indigo-100 text-indigo-800';
+};
+
 const detailsOpen = ref(false);
 const detailsTeacherId = ref(null);
 
@@ -255,6 +312,94 @@ watch(totalDays, (value) => {
 const dayTabs = computed(() => Array.from({ length: totalDays.value }, (_, index) => index + 1));
 
 const hasSchedules = computed(() => (props.group.schedules ?? []).length > 0);
+
+const teacherLoadGroups = computed(() => {
+    const rowsByTeacher = new Map();
+    const keysByTeacher = new Map();
+    const teacherById = new Map();
+
+    const addRow = (teacher, schedule, type) => {
+        if (!teacher) {
+            return;
+        }
+
+        if (!rowsByTeacher.has(teacher.id)) {
+            rowsByTeacher.set(teacher.id, []);
+            keysByTeacher.set(teacher.id, new Set());
+            teacherById.set(teacher.id, teacher);
+        }
+
+        const day = Number(schedule.day ?? 1);
+        const startTime = schedule.start_time ?? '';
+        const endTime = schedule.end_time ?? '';
+        const subject = schedule.subject ?? null;
+        const key = `${day}-${startTime}-${endTime}-${subject?.id ?? schedule.subject_id ?? ''}-${type}`;
+        const keys = keysByTeacher.get(teacher.id);
+
+        if (keys.has(key)) {
+            return;
+        }
+
+        keys.add(key);
+        rowsByTeacher.get(teacher.id).push({
+            key,
+            day,
+            start_time: startTime,
+            end_time: endTime,
+            subject,
+            type,
+        });
+    };
+
+    for (const schedule of props.group.schedules ?? []) {
+        const subjectTeacher = schedule.subject_teacher ?? null;
+        const proctor = schedule.proctor ?? null;
+        const selfProctored =
+            schedule.proctor_id &&
+            schedule.subject_teacher_id &&
+            Number(schedule.proctor_id) === Number(schedule.subject_teacher_id);
+
+        if (subjectTeacher) {
+            addRow(subjectTeacher, schedule, selfProctored ? 'Subject Teacher & Proctor' : 'Subject Teacher');
+        }
+
+        if (proctor && (!selfProctored || !subjectTeacher)) {
+            addRow(proctor, schedule, 'Proctor');
+        }
+    }
+
+    const knownIds = new Set(props.teachers.map((teacher) => Number(teacher.id)));
+    const compareText = (a, b) => String(a ?? '').localeCompare(String(b ?? ''), undefined, { numeric: true });
+
+    return [...rowsByTeacher.entries()]
+        .map(([id, rows]) => ({ teacher: teacherById.get(id), rows }))
+        .sort((a, b) => {
+            const aKnown = knownIds.has(Number(a.teacher?.id));
+            const bKnown = knownIds.has(Number(b.teacher?.id));
+
+            if (aKnown !== bKnown) {
+                return aKnown ? -1 : 1;
+            }
+
+            return (
+                compareText(a.teacher?.lastname, b.teacher?.lastname) ||
+                compareText(a.teacher?.firstname, b.teacher?.firstname) ||
+                compareText(a.teacher?.middlename, b.teacher?.middlename) ||
+                Number(a.teacher?.id ?? 0) - Number(b.teacher?.id ?? 0)
+            );
+        })
+        .map(({ teacher, rows }) => ({
+            teacher,
+            rows: rows
+                .slice()
+                .sort(
+                    (a, b) =>
+                        a.day - b.day ||
+                        compareText(a.start_time, b.start_time) ||
+                        compareText(a.subject?.subject_name, b.subject?.subject_name),
+                ),
+        }));
+});
 
 const scheduleByKey = computed(() => {
     const map = new Map();
@@ -823,29 +968,84 @@ const saveAssignments = () => {
             </div>
 
             <!-- Teacher load -->
-            <div class="rounded-lg bg-white p-6 shadow xl:col-span-2">
-                <div class="flex flex-wrap items-start justify-between gap-3">
+            <div
+                class="bg-white p-6 shadow"
+                :class="teacherPanelFullscreen ? 'fixed inset-0 z-50 overflow-y-auto rounded-none' : 'rounded-lg xl:col-span-2'"
+            >
+                <div
+                    class="flex flex-wrap items-start justify-between gap-3"
+                    :class="teacherPanelFullscreen ? 'sticky top-0 z-10 bg-white pb-3' : ''"
+                >
                     <div>
                         <h3 class="text-base font-semibold text-gray-800">Teacher load</h3>
                         <p class="mt-1 text-sm text-gray-500">
-                            Teaching slots, proctor count against the per-day cap of {{ group.max_proctors_per_teacher }}, and overall load (teaching + proctor). Teachers with two or more subjects on a given day are exempt from proctoring that day; the rule resets the next day. Unchecked teachers never proctor a generated grid.
+                            Teaching slots, proctor count against the per-day cap of {{ group.max_proctors_per_teacher }}, and overall load (teaching + proctor). Proctorship is spread so every eligible teacher gets at least 2 assignments when possible. Teachers with two or more subjects on a given day are exempt from proctoring that day; the rule resets the next day. Unchecked teachers never proctor a generated grid.
                         </p>
                         <p class="mt-2 text-xs text-gray-500">
                             Overall load across the teacher list: min {{ overallSpread.min }}, max {{ overallSpread.max }}, average {{ overallSpread.average.toFixed(1) }}, spread {{ overallSpread.spread }}.
                         </p>
                     </div>
-                    <label class="flex shrink-0 items-center gap-2 text-sm text-gray-700">
-                        <input
-                            type="checkbox"
-                            class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                            :checked="allProctorsSelected"
-                            :indeterminate="someProctorsSelected"
-                            @change="toggleAllProctors"
-                        />
-                        Select all
-                    </label>
+                    <div class="flex shrink-0 flex-wrap items-center gap-3">
+                        <div class="flex items-center gap-2">
+                            <button
+                                type="button"
+                                class="rounded-md px-3 py-1.5 text-sm font-medium"
+                                :class="teacherView === 'cards' ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'"
+                                @click="teacherView = 'cards'"
+                            >
+                                Cards
+                            </button>
+                            <button
+                                type="button"
+                                class="rounded-md px-3 py-1.5 text-sm font-medium"
+                                :class="teacherView === 'table' ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'"
+                                @click="teacherView = 'table'"
+                            >
+                                Table
+                            </button>
+                        </div>
+                        <label class="flex shrink-0 items-center gap-2 text-sm text-gray-700">
+                            <input
+                                type="checkbox"
+                                class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                :checked="allProctorsSelected"
+                                :indeterminate="someProctorsSelected"
+                                @change="toggleAllProctors"
+                            />
+                            Select all
+                        </label>
+                        <button
+                            type="button"
+                            class="rounded-md border border-gray-300 bg-white p-1.5 text-gray-600 shadow-sm hover:bg-gray-50"
+                            :title="teacherPanelFullscreen ? 'Exit fullscreen' : 'Fullscreen'"
+                            :aria-label="teacherPanelFullscreen ? 'Exit fullscreen' : 'Fullscreen'"
+                            @click="toggleTeacherPanelFullscreen"
+                        >
+                            <svg
+                                v-if="!teacherPanelFullscreen"
+                                class="h-4 w-4"
+                                fill="none"
+                                viewBox="0 0 24 24"
+                                stroke-width="1.5"
+                                stroke="currentColor"
+                            >
+                                <path
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15"
+                                />
+                            </svg>
+                            <svg v-else class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                                <path
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25"
+                                />
+                            </svg>
+                        </button>
+                    </div>
                 </div>
-                <div class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <div v-if="teacherView === 'cards'" class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
                     <label
                         v-for="teacher in teachers"
                         :key="teacher.id"
@@ -898,6 +1098,91 @@ const saveAssignments = () => {
                             </span>
                         </span>
                     </label>
+                </div>
+                <div v-else class="mt-3 overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200 text-sm">
+                        <thead>
+                            <tr>
+                                <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Teacher</th>
+                                <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Day / Time</th>
+                                <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Subject</th>
+                                <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Type</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-200">
+                            <template v-for="(teacherGroup, groupIndex) in teacherLoadGroups" :key="teacherGroup.teacher.id">
+                                <tr
+                                    v-for="(row, index) in teacherGroup.rows"
+                                    :key="row.key"
+                                    :class="groupIndex % 2 === 1 ? 'bg-gray-100' : 'bg-white'"
+                                >
+                                    <td
+                                        v-if="index === 0"
+                                        :rowspan="teacherGroup.rows.length"
+                                        class="whitespace-nowrap border-r border-gray-100 px-4 py-3 align-top"
+                                    >
+                                        <div class="flex items-start gap-2">
+                                            <input
+                                                type="checkbox"
+                                                class="mt-0.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                                :checked="selectedProctors.includes(teacherGroup.teacher.id)"
+                                                :title="isSubjectTeacherExempt(teacherGroup.teacher) ? `Exempt from proctoring on day(s) ${exemptDays(teacherGroup.teacher).join(', ')}` : ''"
+                                                @change="toggleProctor(teacherGroup.teacher.id)"
+                                            />
+                                            <div>
+                                                <button
+                                                    type="button"
+                                                    class="text-indigo-600 hover:text-indigo-900"
+                                                    @click="openTeacher(teacherGroup.teacher.id)"
+                                                >
+                                                    {{ teacherTableName(teacherGroup.teacher) }}
+                                                </button>
+                                                <p class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                                                    <span
+                                                        class="font-medium text-gray-700"
+                                                        :title="dayBreakdown(teachingLoadsByDay, teacherGroup.teacher)"
+                                                    >
+                                                        T {{ teachingLoad(teacherGroup.teacher) }}
+                                                    </span>
+                                                    <span
+                                                        class="font-medium"
+                                                        :class="proctorAtCap(teacherGroup.teacher) ? 'text-red-600' : 'text-gray-700'"
+                                                        :title="`${dayBreakdown(proctorLoadsByDay, teacherGroup.teacher)} · cap ${group.max_proctors_per_teacher}/day`"
+                                                    >
+                                                        P {{ proctorLoad(teacherGroup.teacher) }}
+                                                    </span>
+                                                    <span
+                                                        class="font-medium text-gray-700"
+                                                        :title="dayBreakdown(overallLoadsByDay, teacherGroup.teacher)"
+                                                    >
+                                                        O {{ overallLoad(teacherGroup.teacher) }}
+                                                    </span>
+                                                </p>
+                                                <span
+                                                    v-if="isSubjectTeacherExempt(teacherGroup.teacher)"
+                                                    class="mt-1 inline-block rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800"
+                                                >
+                                                    Exempt on day{{ exemptDays(teacherGroup.teacher).length === 1 ? '' : 's' }} {{ exemptDays(teacherGroup.teacher).join(', ') }}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </td>
+                                    <td class="whitespace-nowrap px-4 py-3 text-gray-700">{{ loadRowTime(row) }}</td>
+                                    <td class="px-4 py-3 text-gray-700">{{ row.subject?.subject_name ?? '—' }}</td>
+                                    <td class="whitespace-nowrap px-4 py-3">
+                                        <span class="rounded px-1.5 py-0.5 text-xs" :class="loadTypeClass(row.type)">
+                                            {{ row.type }}
+                                        </span>
+                                    </td>
+                                </tr>
+                            </template>
+                            <tr v-if="teacherLoadGroups.length === 0">
+                                <td colspan="4" class="px-4 py-6 text-center text-sm text-gray-500">
+                                    No schedules generated yet. Generate the grid or add schedules to see teacher load details.
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
         </div>
