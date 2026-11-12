@@ -127,3 +127,52 @@ test('the proctor cap is scoped to a single day', function () {
 
     expect($this->checker->isConflictFree($existing, $candidate, 1))->toBeTrue();
 });
+
+test('a repeated subject teacher across sections is ignored when the overlap check is disabled', function () {
+    $existing = [conflictEntry([
+        'section_id' => 1,
+        'subject_teacher_id' => 10,
+        'proctor_id' => 20,
+    ])];
+
+    $candidate = conflictEntry([
+        'section_id' => 2,
+        'subject_teacher_id' => 10,
+        'proctor_id' => 21,
+    ]);
+
+    expect($this->checker->conflicts($existing, $candidate, 2, false))->toBe([]);
+});
+
+test('a genuinely overlapped proctor is still rejected when the subject teacher check is disabled', function () {
+    $existing = [conflictEntry([
+        'section_id' => 1,
+        'subject_teacher_id' => 10,
+        'proctor_id' => 20,
+    ])];
+
+    $candidate = conflictEntry([
+        'section_id' => 2,
+        'subject_teacher_id' => 11,
+        'proctor_id' => 20,
+    ]);
+
+    expect($this->checker->conflicts($existing, $candidate, 2, false))->not->toBeEmpty();
+});
+
+test('the proctor cap is still enforced when the subject teacher check is disabled', function () {
+    $existing = [
+        conflictEntry(['section_id' => 1, 'proctor_id' => 20, 'start_time' => '07:00:00', 'end_time' => '08:00:00']),
+        conflictEntry(['section_id' => 2, 'proctor_id' => 20, 'start_time' => '09:00:00', 'end_time' => '10:00:00']),
+    ];
+
+    $candidate = conflictEntry([
+        'section_id' => 3,
+        'subject_teacher_id' => 11,
+        'proctor_id' => 20,
+        'start_time' => '10:00:00',
+        'end_time' => '11:00:00',
+    ]);
+
+    expect($this->checker->conflicts($existing, $candidate, 2, false))->not->toBeEmpty();
+});

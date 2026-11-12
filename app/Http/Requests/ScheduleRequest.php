@@ -6,6 +6,7 @@ use App\Enums\ScheduleGroupStatus;
 use App\Models\Schedule;
 use App\Models\ScheduleGroup;
 use App\Models\SectionSubjectTeacher;
+use App\Models\Subject;
 use App\Services\ConflictChecker;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
@@ -76,16 +77,30 @@ class ScheduleRequest extends FormRequest
                 ->map(fn (Schedule $entry): array => $checker->entryFromSchedule($entry))
                 ->all();
 
+            $subjectTeacherId = $this->resolveSubjectTeacherId();
+            $isElective = (bool) Subject::query()->find($this->input('subject_id'))?->is_elective;
+
             $candidate = [
                 'day' => (int) $this->input('day'),
                 'section_id' => (int) $this->input('section_id'),
-                'subject_teacher_id' => (int) $this->resolveSubjectTeacherId(),
-                'proctor_id' => (int) $this->input('proctor_id'),
+                'subject_teacher_id' => (int) $subjectTeacherId,
+                'proctor_id' => $isElective ? (int) $subjectTeacherId : (int) $this->input('proctor_id'),
                 'start_time' => (string) $this->input('start_time'),
                 'end_time' => (string) $this->input('end_time'),
             ];
 
-            $reasons = $checker->conflicts($existing, $candidate, (int) $group->max_proctors_per_teacher);
+            $maxProctors = (int) $group->max_proctors_per_teacher;
+
+            if ($isElective) {
+                // Electives are self-proctored: only section overlaps matter,
+                // mirroring ScheduleGenerator::placeElective().
+                $check = $candidate;
+                unset($check['subject_teacher_id'], $check['proctor_id']);
+
+                $reasons = $checker->conflicts($existing, $check, $maxProctors);
+            } else {
+                $reasons = $checker->conflicts($existing, $candidate, $maxProctors, false);
+            }
 
             foreach ($reasons as $reason) {
                 $validator->errors()->add('proctor_id', $reason);

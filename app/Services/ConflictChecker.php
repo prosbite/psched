@@ -16,9 +16,13 @@ class ConflictChecker
      *
      * @param  array<int, array<string, mixed>>  $existing
      * @param  array<string, mixed>  $candidate
+     * @param  bool  $checkSubjectTeacherOverlap  When false, the subject teacher
+     *                                            role is ignored for the teacher-overlap test, matching the
+     *                                            generator's semantics where a subject teacher may repeat across
+     *                                            sections at the same time.
      * @return array<int, string> The conflict reasons, empty when valid.
      */
-    public function conflicts(array $existing, array $candidate, int $maxProctorsPerTeacher): array
+    public function conflicts(array $existing, array $candidate, int $maxProctorsPerTeacher, bool $checkSubjectTeacherOverlap = true): array
     {
         $reasons = [];
 
@@ -26,13 +30,21 @@ class ConflictChecker
             $reasons[] = 'The proctor cannot be the same teacher as the subject teacher.';
         }
 
+        $overlapCandidate = $candidate;
+
+        if (! $checkSubjectTeacherOverlap) {
+            unset($overlapCandidate['subject_teacher_id']);
+        }
+
         foreach ($existing as $entry) {
             if ($this->sameDay($entry, $candidate) && $this->sameSection($entry, $candidate) && $this->overlaps($entry, $candidate)) {
                 $reasons[] = 'This section already has an overlapping schedule at this time.';
             }
 
-            if ($this->sameDay($entry, $candidate) && $this->sharesTeacher($entry, $candidate) && $this->overlaps($entry, $candidate)) {
-                $reasons[] = 'A teacher is already assigned to an overlapping schedule.';
+            if ($this->sameDay($entry, $candidate) && $this->sharesTeacher($entry, $overlapCandidate) && $this->overlaps($entry, $candidate)) {
+                $reasons[] = $checkSubjectTeacherOverlap
+                    ? 'A teacher is already assigned to an overlapping schedule.'
+                    : 'The selected proctor is already assigned to another schedule at this time.';
             }
         }
 
@@ -52,9 +64,9 @@ class ConflictChecker
      * @param  array<int, array<string, mixed>>  $existing
      * @param  array<string, mixed>  $candidate
      */
-    public function isConflictFree(array $existing, array $candidate, int $maxProctorsPerTeacher): bool
+    public function isConflictFree(array $existing, array $candidate, int $maxProctorsPerTeacher, bool $checkSubjectTeacherOverlap = true): bool
     {
-        return $this->conflicts($existing, $candidate, $maxProctorsPerTeacher) === [];
+        return $this->conflicts($existing, $candidate, $maxProctorsPerTeacher, $checkSubjectTeacherOverlap) === [];
     }
 
     /**
