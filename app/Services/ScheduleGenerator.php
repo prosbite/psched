@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Enums\SubjectType;
 use App\Models\ScheduleGroup;
 use App\Models\Section;
 use App\Models\SectionSubjectTeacher;
@@ -37,7 +38,8 @@ use Illuminate\Support\Collection;
  * time, but not across different subjects: an exam whose teacher is already
  * teaching another subject at that real time is reported as unplaced instead
  * of double-booking them. Proctors who are teaching any planned exam at that
- * time are skipped.
+ * time are skipped. Core subjects may also be proctored by their own subject
+ * teacher, counted as a normal proctorship; regular subjects may not.
  */
 class ScheduleGenerator
 {
@@ -172,7 +174,7 @@ class ScheduleGenerator
 
                         $base = $this->baseEntry($group, $section, $subject, $subjectTeacherId, $day, $slot);
 
-                        if ($subject->is_elective) {
+                        if (($subject->type ?? SubjectType::Regular) === SubjectType::Elective) {
                             if ($this->conflicts->hasConflictingTeacher($placed, $base)) {
                                 $unplaced[] = $this->unplacedEntry(
                                     $day,
@@ -221,16 +223,27 @@ class ScheduleGenerator
                             continue;
                         }
 
-                        $entry = $this->place(
-                            $base,
-                            $subjectTeacherId,
-                            $dayProctors,
-                            $placed,
-                            $loadTotals,
-                            $proctorTotals,
-                            $maxProctors,
-                            $teachingPlan,
-                        );
+                        $entry = ($subject->type ?? SubjectType::Regular) === SubjectType::Core
+                            ? $this->placeCore(
+                                $base,
+                                $subjectTeacherId,
+                                $dayProctors,
+                                $placed,
+                                $loadTotals,
+                                $proctorTotals,
+                                $maxProctors,
+                                $teachingPlan,
+                            )
+                            : $this->place(
+                                $base,
+                                $subjectTeacherId,
+                                $dayProctors,
+                                $placed,
+                                $loadTotals,
+                                $proctorTotals,
+                                $maxProctors,
+                                $teachingPlan,
+                            );
 
                         if ($entry === null) {
                             $unplaced[] = $this->unplacedEntry(
@@ -321,6 +334,54 @@ class ScheduleGenerator
             }
 
             if (! $this->conflicts->isConflictFree($placed, $candidate, $maxProctors, false)) {
+                continue;
+            }
+
+            return $candidate;
+        }
+
+        return null;
+    }
+
+    /**
+     * Attempt to place a core exam, which may be proctored by its subject
+     * teacher.
+     *
+     * The subject teacher is a normal candidate in the fairness order. When a
+     * different proctor is chosen, planned teaching work still excludes them;
+     * when the subject teacher proctors, that check is skipped because the
+     * teaching plan's own entry is this exam.
+     *
+     * @param  array<int, int>  $proctors
+     * @param  array<int, array<string, mixed>>  $placed
+     * @param  array<int, int>  $loadTotals
+     * @param  array<int, int>  $proctorTotals
+     * @param  array<int, array<string, mixed>>  $teachingPlan
+     * @return array<string, mixed>|null
+     */
+    private function placeCore(
+        array $base,
+        int $subjectTeacherId,
+        array $proctors,
+        array $placed,
+        array $loadTotals,
+        array $proctorTotals,
+        int $maxProctors,
+        array $teachingPlan,
+    ): ?array {
+        foreach ($this->orderByFairness($proctors, $proctorTotals, $loadTotals) as $proctorId) {
+            $candidate = $base + ['proctor_id' => $proctorId];
+
+            if ($proctorId !== $subjectTeacherId) {
+                $proctorCheck = $candidate;
+                $proctorCheck['subject_teacher_id'] = null;
+
+                if ($this->conflicts->hasConflictingTeacher($teachingPlan, $proctorCheck)) {
+                    continue;
+                }
+            }
+
+            if (! $this->conflicts->isCoreConflictFree($placed, $candidate, $maxProctors)) {
                 continue;
             }
 

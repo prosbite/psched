@@ -13,6 +13,7 @@ import SecondaryButton from '@/Components/SecondaryButton.vue';
 const props = defineProps({
     subjects: { type: Array, required: true },
     gradeLevels: { type: Array, required: true },
+    subjectTypes: { type: Array, required: true },
     sections: { type: Array, required: true },
     teachers: { type: Array, required: true },
     assignments: { type: Array, required: true },
@@ -20,7 +21,7 @@ const props = defineProps({
 
 const showModal = ref(false);
 const editing = ref(null);
-const form = useForm({ subject_name: '', grade_level_id: '', is_elective: false });
+const form = useForm({ subject_name: '', grade_level_id: '', type: 'regular' });
 
 const openCreate = () => {
     editing.value = null;
@@ -33,7 +34,7 @@ const openEdit = (subject) => {
     editing.value = subject;
     form.subject_name = subject.subject_name;
     form.grade_level_id = subject.grade_level_id;
-    form.is_elective = Boolean(subject.is_elective);
+    form.type = subject.type ?? 'regular';
     form.clearErrors();
     showModal.value = true;
 };
@@ -120,7 +121,8 @@ const saveAssignments = () => {
                     <tr v-for="subject in subjects" :key="subject.id">
                         <td class="px-4 py-3 text-sm text-gray-900">
                             {{ subject.subject_name }}
-                            <span v-if="subject.is_elective" class="ms-2 rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800">Elective</span>
+                            <span v-if="subject.type === 'core'" class="ms-2 rounded bg-sky-100 px-1.5 py-0.5 text-xs text-sky-800">Core</span>
+                            <span v-if="subject.type === 'elective'" class="ms-2 rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800">Elective</span>
                         </td>
                         <td class="px-4 py-3 text-sm text-gray-600">{{ subject.grade_level?.grade_level }}</td>
                         <td class="px-4 py-3 text-sm text-gray-600">{{ subject.section_subject_teachers_count }}</td>
@@ -164,16 +166,19 @@ const saveAssignments = () => {
                     <InputError class="mt-2" :message="form.errors.grade_level_id" />
                 </div>
 
-                <label for="is_elective" class="mt-4 flex items-center gap-2 text-sm text-gray-700">
-                    <input
-                        id="is_elective"
-                        v-model="form.is_elective"
-                        type="checkbox"
-                        class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                    />
-                    Elective subject
-                </label>
-                <InputError class="mt-2" :message="form.errors.is_elective" />
+                <div class="mt-4">
+                    <InputLabel for="type" value="Subject Type" />
+                    <select
+                        id="type"
+                        v-model="form.type"
+                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                    >
+                        <option v-for="subjectType in subjectTypes" :key="subjectType.value" :value="subjectType.value">
+                            {{ subjectType.label }}
+                        </option>
+                    </select>
+                    <InputError class="mt-2" :message="form.errors.type" />
+                </div>
 
                 <div class="mt-6 flex justify-end gap-3">
                     <SecondaryButton type="button" @click="showModal = false">Cancel</SecondaryButton>

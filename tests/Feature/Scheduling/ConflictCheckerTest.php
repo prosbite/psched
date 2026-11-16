@@ -293,3 +293,75 @@ test('the proctor cap is still enforced when the subject teacher check is disabl
 
     expect($this->checker->conflicts($existing, $candidate, 2, false))->not->toBeEmpty();
 });
+
+test('a self-proctored core subject may repeat across sections of the same subject', function () {
+    $existing = [conflictEntry([
+        'section_id' => 1,
+        'subject_id' => 5,
+        'subject_teacher_id' => 10,
+        'proctor_id' => 10,
+    ])];
+
+    $candidate = conflictEntry([
+        'section_id' => 2,
+        'subject_id' => 5,
+        'subject_teacher_id' => 10,
+        'proctor_id' => 10,
+    ]);
+
+    expect($this->checker->coreConflicts($existing, $candidate, 2))->toBe([]);
+    expect($this->checker->isCoreConflictFree($existing, $candidate, 2))->toBeTrue();
+});
+
+test('a core subject teacher teaching a different subject at the same time conflicts', function () {
+    $existing = [conflictEntry([
+        'section_id' => 1,
+        'subject_id' => 5,
+        'subject_teacher_id' => 10,
+        'proctor_id' => 20,
+    ])];
+
+    $candidate = conflictEntry([
+        'section_id' => 2,
+        'subject_id' => 6,
+        'subject_teacher_id' => 10,
+        'proctor_id' => 10,
+    ]);
+
+    expect($this->checker->coreConflicts($existing, $candidate, 2))->not->toBeEmpty();
+});
+
+test('a core candidate proctor who is teaching another subject at the same time conflicts', function () {
+    $existing = [conflictEntry([
+        'section_id' => 1,
+        'subject_id' => 5,
+        'subject_teacher_id' => 10,
+        'proctor_id' => 20,
+    ])];
+
+    $candidate = conflictEntry([
+        'section_id' => 2,
+        'subject_id' => 6,
+        'subject_teacher_id' => 30,
+        'proctor_id' => 10,
+    ]);
+
+    expect($this->checker->coreConflicts($existing, $candidate, 2))->not->toBeEmpty();
+});
+
+test('a core candidate still respects the proctor cap', function () {
+    $existing = [
+        conflictEntry(['section_id' => 1, 'subject_id' => 5, 'subject_teacher_id' => 10, 'proctor_id' => 10, 'start_time' => '07:00:00', 'end_time' => '08:00:00']),
+    ];
+
+    $candidate = conflictEntry([
+        'section_id' => 2,
+        'subject_id' => 5,
+        'subject_teacher_id' => 10,
+        'proctor_id' => 10,
+        'start_time' => '09:00:00',
+        'end_time' => '10:00:00',
+    ]);
+
+    expect($this->checker->coreConflicts($existing, $candidate, 1))->not->toBeEmpty();
+});

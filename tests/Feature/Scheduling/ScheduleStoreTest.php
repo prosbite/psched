@@ -1,5 +1,6 @@
 <?php
 
+use App\Enums\SubjectType;
 use App\Enums\UserRole;
 use App\Models\GradeLevel;
 use App\Models\Room;
@@ -74,7 +75,7 @@ test('storing an elective schedule uses the subject teacher as proctor', functio
 
     $elective = Subject::factory()->create([
         'grade_level_id' => $section->grade_level_id,
-        'is_elective' => true,
+        'type' => SubjectType::Elective,
     ]);
     SectionSubjectTeacher::factory()->create([
         'section_id' => $section->id,
@@ -159,4 +160,86 @@ test('storing a schedule for an unmapped pair is rejected', function () {
         ->assertSessionHasErrors('subject_id');
 
     expect($group->schedules()->count())->toBe(0);
+});
+
+test('storing a core schedule may use the subject teacher as proctor', function () {
+    $admin = User::factory()->create(['role' => UserRole::Admin]);
+    [$group, $section, $subject, $teacher, $proctor] = scheduleStoreContext();
+
+    $core = Subject::factory()->create([
+        'grade_level_id' => $section->grade_level_id,
+        'type' => SubjectType::Core,
+    ]);
+    SectionSubjectTeacher::factory()->create([
+        'section_id' => $section->id,
+        'subject_id' => $core->id,
+        'teacher_id' => $teacher->id,
+    ]);
+    $group->subjects()->attach($core);
+
+    $this->actingAs($admin)
+        ->post(route('schedule-groups.schedules.store', $group), [
+            'day' => 1,
+            'section_id' => $section->id,
+            'subject_id' => $core->id,
+            'proctor_id' => $teacher->id,
+            'start_time' => '07:00',
+            'end_time' => '08:00',
+        ])
+        ->assertSessionHasNoErrors();
+
+    $schedule = $group->schedules()->where('subject_id', $core->id)->first();
+
+    expect($schedule)->not->toBeNull();
+    expect($schedule->subject_teacher_id)->toBe($teacher->id);
+    expect($schedule->proctor_id)->toBe($teacher->id);
+});
+
+test('storing a core schedule whose teacher is already teaching another subject is rejected', function () {
+    $admin = User::factory()->create(['role' => UserRole::Admin]);
+    [$group, $section, $subject, $teacher, $proctor] = scheduleStoreContext();
+
+    $core = Subject::factory()->create([
+        'grade_level_id' => $section->grade_level_id,
+        'type' => SubjectType::Core,
+    ]);
+    $otherSubject = Subject::factory()->create([
+        'grade_level_id' => $section->grade_level_id,
+    ]);
+    $group->subjects()->attach([$core->id, $otherSubject->id]);
+
+    SectionSubjectTeacher::factory()->create([
+        'section_id' => $section->id,
+        'subject_id' => $core->id,
+        'teacher_id' => $teacher->id,
+    ]);
+    SectionSubjectTeacher::factory()->create([
+        'section_id' => $section->id,
+        'subject_id' => $otherSubject->id,
+        'teacher_id' => $teacher->id,
+    ]);
+
+    Schedule::factory()->create([
+        'schedule_group_id' => $group->id,
+        'day' => 1,
+        'section_id' => $section->id,
+        'subject_id' => $otherSubject->id,
+        'subject_teacher_id' => $teacher->id,
+        'proctor_id' => $proctor->id,
+        'start_time' => '07:00:00',
+        'end_time' => '08:00:00',
+    ]);
+
+    $this->actingAs($admin)
+        ->post(route('schedule-groups.schedules.store', $group), [
+            'day' => 1,
+            'section_id' => $section->id,
+            'subject_id' => $core->id,
+            'proctor_id' => $teacher->id,
+            'start_time' => '07:00',
+            'end_time' => '08:00',
+        ])
+        ->assertSessionHasErrors('proctor_id');
+
+    expect($group->schedules()->where('subject_id', $core->id)->count())->toBe(0);
 });

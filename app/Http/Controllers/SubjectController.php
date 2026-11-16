@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Enums\SubjectType;
 use App\Models\GradeLevel;
 use App\Models\Section;
 use App\Models\SectionSubjectTeacher;
@@ -23,6 +24,12 @@ class SubjectController extends Controller
         return Inertia::render('Subjects/Index', [
             'subjects' => Subject::with('gradeLevel')->withCount('sectionSubjectTeachers')->orderBy('subject_name')->get(),
             'gradeLevels' => GradeLevel::orderBy('grade_level')->get(),
+            'subjectTypes' => collect(SubjectType::cases())
+                ->map(fn (SubjectType $type): array => [
+                    'value' => $type->value,
+                    'label' => $type->label(),
+                ])
+                ->values(),
             'sections' => Section::with('gradeLevel')->orderBy('section_name')->get(),
             'teachers' => Teacher::orderBy('lastname')->get(),
             'assignments' => SectionSubjectTeacher::query()
@@ -90,7 +97,7 @@ class SubjectController extends Controller
         $validated = $request->validate([
             'subject_name' => ['required', 'string', 'max:255'],
             'grade_level_id' => ['required', 'integer', Rule::exists('grade_levels', 'id')],
-            'is_elective' => ['boolean'],
+            'type' => ['required', Rule::enum(SubjectType::class)],
         ]);
 
         Subject::create($validated);
@@ -106,7 +113,7 @@ class SubjectController extends Controller
         $validated = $request->validate([
             'subject_name' => ['required', 'string', 'max:255'],
             'grade_level_id' => ['required', 'integer', Rule::exists('grade_levels', 'id')],
-            'is_elective' => ['boolean'],
+            'type' => ['required', Rule::enum(SubjectType::class)],
         ]);
 
         $subject->update($validated);

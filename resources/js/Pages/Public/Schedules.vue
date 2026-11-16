@@ -151,12 +151,12 @@ const buildBlocks = (group, day) => {
                     schedule: daySchedules.get(`${section.id}-${subject.id}`) ?? null,
                 }));
 
-            if (subject.is_elective && rows.length === 0) {
+            if (subject.type === 'elective' && rows.length === 0) {
                 subjectGroups.push({ key, subject, timeLabel, elective: true, placeholder: true, rows: [] });
                 continue;
             }
 
-            subjectGroups.push({ key, subject, timeLabel, elective: subject.is_elective, placeholder: false, rows });
+            subjectGroups.push({ key, subject, timeLabel, elective: subject.type === 'elective', placeholder: false, rows });
         }
 
         blocks.push({ gradeId, grade: sections[0].grade_level ?? null, groups: subjectGroups });

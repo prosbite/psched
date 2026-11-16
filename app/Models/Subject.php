@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\SubjectType;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -9,7 +10,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-#[Fillable(['subject_name', 'grade_level_id', 'is_elective'])]
+#[Fillable(['subject_name', 'grade_level_id', 'type'])]
 class Subject extends Model
 {
     use HasFactory;
@@ -20,7 +21,7 @@ class Subject extends Model
     protected function casts(): array
     {
         return [
-            'is_elective' => 'boolean',
+            'type' => SubjectType::class,
         ];
     }
 

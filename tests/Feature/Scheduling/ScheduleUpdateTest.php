@@ -1,5 +1,6 @@
 <?php
 
+use App\Enums\SubjectType;
 use App\Enums\UserRole;
 use App\Models\GradeLevel;
 use App\Models\Room;
@@ -170,7 +171,7 @@ test('updating an elective schedule ignores the submitted proctor and keeps the 
 
     $elective = Subject::factory()->create([
         'grade_level_id' => $context['sections'][0]->grade_level_id,
-        'is_elective' => true,
+        'type' => SubjectType::Elective,
     ]);
     $context['group']->subjects()->attach($elective);
 

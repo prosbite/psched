@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Enums\ScheduleGroupStatus;
+use App\Enums\SubjectType;
 use App\Http\Requests\ScheduleRequest;
 use App\Models\Schedule;
 use App\Models\ScheduleGroup;
@@ -86,7 +87,7 @@ class ScheduleController extends Controller
 
         $subject = Subject::query()->find($request->input('subject_id'));
 
-        $proctorId = $subject?->is_elective && $subjectTeacherId !== null
+        $proctorId = ($subject?->type ?? SubjectType::Regular) === SubjectType::Elective && $subjectTeacherId !== null
             ? (int) $subjectTeacherId
             : (int) $request->input('proctor_id');
 

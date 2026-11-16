@@ -523,12 +523,12 @@ const dayBlocks = computed(() => {
                     unplaced: unplacedByKey.value.get(`${day}-${section.id}-${subject.id}`) ?? null,
                 }));
 
-            if (subject.is_elective && rows.length === 0) {
+            if (subject.type === 'elective' && rows.length === 0) {
                 groups.push({ key, subject, timeLabel, elective: true, placeholder: true, rows: [] });
                 continue;
             }
 
-            groups.push({ key, subject, timeLabel, elective: subject.is_elective, placeholder: false, rows });
+            groups.push({ key, subject, timeLabel, elective: subject.type === 'elective', placeholder: false, rows });
         }
 
         blocks.push({ gradeId, grade: sections[0].grade_level ?? null, groups });
@@ -935,7 +935,8 @@ const saveAssignments = () => {
                                             @change="toggle(setupForm.subjects, subject.id)"
                                         />
                                         {{ subject.subject_name }}
-                                        <span v-if="subject.is_elective" class="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800">Elective</span>
+                                        <span v-if="subject.type === 'core'" class="rounded bg-sky-100 px-1.5 py-0.5 text-xs text-sky-800">Core</span>
+                                        <span v-if="subject.type === 'elective'" class="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800">Elective</span>
                                     </label>
                                     <span v-if="setupOrderIndex(subject)" class="flex items-center gap-1 text-xs text-gray-400">
                                         #{{ setupOrderIndex(subject) }}

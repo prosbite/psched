@@ -70,6 +70,54 @@ class ConflictChecker
     }
 
     /**
+     * Check a core subject candidate, which may be self-proctored.
+     *
+     * Unlike {@see conflicts()}, the candidate proctor is allowed to be the
+     * subject teacher. Section overlaps, subject-aware teacher double-booking,
+     * and the per-day proctor cap are still enforced.
+     *
+     * @param  array<int, array<string, mixed>>  $existing
+     * @param  array<string, mixed>  $candidate
+     * @return array<int, string> The conflict reasons, empty when valid.
+     */
+    public function coreConflicts(array $existing, array $candidate, int $maxProctorsPerTeacher): array
+    {
+        $reasons = [];
+
+        foreach ($existing as $entry) {
+            if ($this->sameDay($entry, $candidate) && $this->sameSection($entry, $candidate) && $this->overlaps($entry, $candidate)) {
+                $reasons[] = 'This section already has an overlapping schedule at this time.';
+            }
+
+            if ($this->sameDay($entry, $candidate)
+                && $this->overlaps($entry, $candidate)
+                && $this->teacherRolesConflict($entry, $candidate)) {
+                $reasons[] = 'A teacher is already assigned to an overlapping schedule.';
+            }
+        }
+
+        if ($this->proctorCapExceeded($existing, $candidate, $maxProctorsPerTeacher)) {
+            $reasons[] = sprintf(
+                'The proctor already proctors the maximum of %d schedule(s) in this group.',
+                $maxProctorsPerTeacher,
+            );
+        }
+
+        return array_values(array_unique($reasons));
+    }
+
+    /**
+     * Determine whether a core candidate is conflict-free.
+     *
+     * @param  array<int, array<string, mixed>>  $existing
+     * @param  array<string, mixed>  $candidate
+     */
+    public function isCoreConflictFree(array $existing, array $candidate, int $maxProctorsPerTeacher): bool
+    {
+        return $this->coreConflicts($existing, $candidate, $maxProctorsPerTeacher) === [];
+    }
+
+    /**
      * Convert a persisted schedule into an in-memory entry.
      *
      * @return array<string, mixed>

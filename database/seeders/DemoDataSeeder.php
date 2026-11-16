@@ -2,6 +2,7 @@
 
 namespace Database\Seeders;
 
+use App\Enums\SubjectType;
 use App\Enums\UserRole;
 use App\Models\GradeLevel;
 use App\Models\Quarter;
@@ -247,7 +248,9 @@ class DemoDataSeeder extends Seeder
                         'grade_level_id' => $gradeLevels[$grade]->id,
                     ],
                     [
-                        'is_elective' => (self::ELECTIVES[$grade] ?? null) === $name,
+                        'type' => (self::ELECTIVES[$grade] ?? null) === $name
+                            ? SubjectType::Elective
+                            : SubjectType::Regular,
                     ],
                 );
             }

@@ -2,6 +2,7 @@
 
 namespace Database\Factories;
 
+use App\Enums\SubjectType;
 use App\Models\GradeLevel;
 use App\Models\Subject;
 use Illuminate\Database\Eloquent\Factories\Factory;
@@ -28,6 +29,7 @@ class SubjectFactory extends Factory
                 'Physical Education',
             ]).' '.fake()->numberBetween(1, 999),
             'grade_level_id' => GradeLevel::factory(),
+            'type' => SubjectType::Regular,
         ];
     }
 }

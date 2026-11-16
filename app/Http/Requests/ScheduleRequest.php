@@ -3,6 +3,7 @@
 namespace App\Http\Requests;
 
 use App\Enums\ScheduleGroupStatus;
+use App\Enums\SubjectType;
 use App\Models\Schedule;
 use App\Models\ScheduleGroup;
 use App\Models\SectionSubjectTeacher;
@@ -78,7 +79,8 @@ class ScheduleRequest extends FormRequest
                 ->all();
 
             $subjectTeacherId = $this->resolveSubjectTeacherId();
-            $isElective = (bool) Subject::query()->find($this->input('subject_id'))?->is_elective;
+            $subjectType = Subject::query()->find($this->input('subject_id'))?->type ?? SubjectType::Regular;
+            $isElective = $subjectType === SubjectType::Elective;
 
             $candidate = [
                 'day' => (int) $this->input('day'),
@@ -106,6 +108,8 @@ class ScheduleRequest extends FormRequest
                 unset($check['subject_teacher_id'], $check['proctor_id']);
 
                 $reasons = $checker->conflicts($existing, $check, $maxProctors);
+            } elseif ($subjectType === SubjectType::Core) {
+                $reasons = $checker->coreConflicts($existing, $candidate, $maxProctors);
             } else {
                 if ($checker->hasConflictingTeacher($existing, $subjectTeacherCandidate)) {
                     $validator->errors()->add('proctor_id', 'The subject teacher for this exam is already teaching another subject at this time.');

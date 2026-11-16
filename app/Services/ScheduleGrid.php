@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Enums\SubjectType;
 use App\Models\Schedule;
 use App\Models\ScheduleGroup;
 use App\Models\Section;
@@ -114,7 +115,7 @@ class ScheduleGrid
                     }
 
                     if ($rows === []) {
-                        if (! $subject->is_elective) {
+                        if (($subject->type ?? SubjectType::Regular) !== SubjectType::Elective) {
                             continue;
                         }
 
@@ -141,7 +142,7 @@ class ScheduleGrid
                     $subjectGroups[] = [
                         'time' => $time,
                         'subject' => $subject->subject_name,
-                        'elective' => (bool) $subject->is_elective,
+                        'elective' => ($subject->type ?? SubjectType::Regular) === SubjectType::Elective,
                         'placeholder' => false,
                         'uniform_teacher' => $this->uniformTeacher($rows),
                         'rows' => $rows,
