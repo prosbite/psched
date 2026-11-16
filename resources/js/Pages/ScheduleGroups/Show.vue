@@ -10,6 +10,7 @@ import InputError from '@/Components/InputError.vue';
 import TextInput from '@/Components/TextInput.vue';
 import PrimaryButton from '@/Components/PrimaryButton.vue';
 import SecondaryButton from '@/Components/SecondaryButton.vue';
+import { buildScheduleLoads } from '@/lib/scheduleLoad';
 
 const props = defineProps({
     group: { type: Object, required: true },
@@ -18,12 +19,6 @@ const props = defineProps({
     allSubjects: { type: Array, required: true },
     allPresets: { type: Array, required: true },
     teachers: { type: Array, required: true },
-    teachingLoads: { type: Object, default: () => ({}) },
-    proctorLoads: { type: Object, default: () => ({}) },
-    overallLoads: { type: Object, default: () => ({}) },
-    teachingLoadsByDay: { type: Object, default: () => ({}) },
-    proctorLoadsByDay: { type: Object, default: () => ({}) },
-    overallLoadsByDay: { type: Object, default: () => ({}) },
     subjectTeacherLoads: { type: Object, default: () => ({}) },
     subjectTeacherLoadsByDay: { type: Object, default: () => ({}) },
     assignments: { type: Array, default: () => [] },
@@ -36,19 +31,32 @@ const report = computed(() => page.props.flash?.generationReport ?? null);
 const isDraft = computed(() => props.group.status === 'draft');
 const isActive = computed(() => props.group.status === 'active');
 
+const scheduleLoads = computed(() =>
+    buildScheduleLoads(
+        props.group.schedules ?? [],
+        props.teachers.map((teacher) => teacher.id),
+    ),
+);
+const teachingLoads = computed(() => scheduleLoads.value.teaching);
+const proctorLoads = computed(() => scheduleLoads.value.proctor);
+const overallLoads = computed(() => scheduleLoads.value.overall);
+const teachingLoadsByDay = computed(() => scheduleLoads.value.teachingByDay);
+const proctorLoadsByDay = computed(() => scheduleLoads.value.proctorByDay);
+const overallLoadsByDay = computed(() => scheduleLoads.value.overallByDay);
+
 const subjectTeacherLoad = (teacher) => Number(props.subjectTeacherLoads?.[teacher?.id] ?? 0);
 const subjectTeacherLoadOnDay = (teacher, day) => Number(props.subjectTeacherLoadsByDay?.[teacher?.id]?.[day] ?? 0);
 const exemptDays = (teacher) => dayTabs.value.filter((day) => subjectTeacherLoadOnDay(teacher, day) >= 2);
 const isSubjectTeacherExempt = (teacher) => exemptDays(teacher).length > 0;
 
-const teachingLoad = (teacher) => Number(props.teachingLoads?.[teacher?.id] ?? 0);
-const proctorLoad = (teacher) => Number(props.proctorLoads?.[teacher?.id] ?? 0);
-const overallLoad = (teacher) => Number(props.overallLoads?.[teacher?.id] ?? 0);
+const teachingLoad = (teacher) => Number(teachingLoads.value?.[teacher?.id] ?? 0);
+const proctorLoad = (teacher) => Number(proctorLoads.value?.[teacher?.id] ?? 0);
+const overallLoad = (teacher) => Number(overallLoads.value?.[teacher?.id] ?? 0);
 
 const loadByDay = (map, teacher, day) => Number(map?.[teacher?.id]?.[day] ?? 0);
 
 const proctorAtCap = (teacher) =>
-    dayTabs.value.some((day) => loadByDay(props.proctorLoadsByDay, teacher, day) >= Number(props.group.max_proctors_per_teacher));
+    dayTabs.value.some((day) => loadByDay(proctorLoadsByDay.value, teacher, day) >= Number(props.group.max_proctors_per_teacher));
 
 const dayBreakdown = (map, teacher) =>
     dayTabs.value.map((day) => `D${day} ${loadByDay(map, teacher, day)}`).join(' · ');

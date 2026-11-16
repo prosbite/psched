@@ -12,6 +12,7 @@ use App\Models\Subject;
 use App\Models\Teacher;
 use App\Models\TimePreset;
 use App\Models\User;
+use Inertia\Testing\AssertableInertia as Assert;
 
 /**
  * @return array{group: ScheduleGroup, sections: array{0: Section, 1: Section}, subject: Subject, teacher: Teacher, proctor: Teacher, siblingProctor: Teacher, freeProctor: Teacher}
@@ -250,6 +251,70 @@ test('updating to a different subject whose teacher is already teaching is rejec
         ->assertSessionHasErrors('proctor_id');
 
     expect($schedule->fresh()->subject_id)->toBe($context['subject']->id);
+});
+
+test('the show page reflects a proctor switch immediately', function () {
+    $admin = User::factory()->create(['role' => UserRole::Admin]);
+    $context = scheduleUpdateContext();
+
+    $schedule = scheduleUpdateEntry($context, 0, $context['proctor']);
+
+    $this->withoutVite()
+        ->actingAs($admin)
+        ->get(route('schedule-groups.show', $context['group']))
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->component('ScheduleGroups/Show')
+            ->has('group.schedules', 1)
+            ->where('group.schedules.0.id', $schedule->id)
+            ->where('group.schedules.0.proctor_id', $context['proctor']->id)
+        );
+
+    $this->actingAs($admin)
+        ->put(route('schedule-groups.schedules.update', [$context['group'], $schedule]), [
+            'day' => 3,
+            'section_id' => $context['sections'][0]->id,
+            'subject_id' => $context['subject']->id,
+            'proctor_id' => $context['freeProctor']->id,
+            'start_time' => '07:00',
+            'end_time' => '08:00',
+        ])
+        ->assertRedirect(route('schedule-groups.show', $context['group']));
+
+    $this->withoutVite()
+        ->actingAs($admin)
+        ->get(route('schedule-groups.show', $context['group']))
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->has('group.schedules', 1)
+            ->where('group.schedules.0.id', $schedule->id)
+            ->where('group.schedules.0.proctor_id', $context['freeProctor']->id)
+        );
+});
+
+test('schedule store and destroy redirect back to the group show page', function () {
+    $admin = User::factory()->create(['role' => UserRole::Admin]);
+    $context = scheduleUpdateContext();
+
+    $this->actingAs($admin)
+        ->post(route('schedule-groups.schedules.store', $context['group']), [
+            'day' => 3,
+            'section_id' => $context['sections'][0]->id,
+            'subject_id' => $context['subject']->id,
+            'proctor_id' => $context['proctor']->id,
+            'start_time' => '07:00',
+            'end_time' => '08:00',
+        ])
+        ->assertSessionHasNoErrors()
+        ->assertRedirect(route('schedule-groups.show', $context['group']));
+
+    $schedule = $context['group']->schedules()->firstOrFail();
+
+    $this->actingAs($admin)
+        ->delete(route('schedule-groups.schedules.destroy', [$context['group'], $schedule]))
+        ->assertRedirect(route('schedule-groups.show', $context['group']));
+
+    expect($context['group']->schedules()->count())->toBe(0);
 });
 
 test('the per-day proctor cap is still enforced when updating a schedule', function () {

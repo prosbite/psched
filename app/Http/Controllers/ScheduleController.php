@@ -24,7 +24,9 @@ class ScheduleController extends Controller
         $scheduleGroup->schedules()->create($attributes);
         $this->clearUnplaced($scheduleGroup, $attributes);
 
-        return back()->with('success', 'Schedule added.');
+        return redirect()
+            ->route('schedule-groups.show', $scheduleGroup)
+            ->with('success', 'Schedule added.');
     }
 
     /**
@@ -39,7 +41,9 @@ class ScheduleController extends Controller
         $schedule->update($attributes);
         $this->clearUnplaced($scheduleGroup, $attributes);
 
-        return back()->with('success', 'Schedule updated.');
+        return redirect()
+            ->route('schedule-groups.show', $scheduleGroup)
+            ->with('success', 'Schedule updated.');
     }
 
     /**
@@ -55,7 +59,9 @@ class ScheduleController extends Controller
 
         $schedule->delete();
 
-        return back()->with('success', 'Schedule removed.');
+        return redirect()
+            ->route('schedule-groups.show', $scheduleGroup)
+            ->with('success', 'Schedule removed.');
     }
 
     /**

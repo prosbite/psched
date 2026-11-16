@@ -48,7 +48,7 @@ const submit = () => {
 };
 
 const destroy = (subject) => {
-    if (confirm(`Delete ${subject.subject_name}?`)) {
+    if (confirm(`Are you sure you want to delete "${subject.subject_name}"? Its schedules and teacher assignments will also be removed.`)) {
         form.delete(route('subjects.destroy', subject.id));
     }
 };

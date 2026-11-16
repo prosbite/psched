@@ -126,10 +126,6 @@ class SubjectController extends Controller
      */
     public function destroy(Subject $subject): RedirectResponse
     {
-        if ($subject->schedules()->exists() || $subject->scheduleGroups()->exists()) {
-            return back()->with('error', 'This subject is used by a schedule group or schedule and cannot be deleted.');
-        }
-
         $subject->delete();
 
         return redirect()->route('subjects.index')->with('success', 'Subject deleted.');

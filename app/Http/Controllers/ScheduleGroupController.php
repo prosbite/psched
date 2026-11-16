@@ -13,7 +13,6 @@ use App\Models\Subject;
 use App\Models\Teacher;
 use App\Models\TimePreset;
 use App\Services\ScheduleGenerator;
-use App\Services\ScheduleLoad;
 use App\Services\SubjectSlotPlanner;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -108,10 +107,6 @@ class ScheduleGroupController extends Controller
             ->all();
 
         $teachers = Teacher::orderBy('lastname')->get();
-        $loads = app(ScheduleLoad::class)->fromSchedules(
-            $scheduleGroup->schedules,
-            $teachers->pluck('id')->all(),
-        );
 
         $subjectPlan = app(SubjectSlotPlanner::class)->displayPlanForGroup($scheduleGroup);
 
@@ -122,12 +117,6 @@ class ScheduleGroupController extends Controller
             'allSubjects' => Subject::with('gradeLevel')->orderBy('subject_name')->get(),
             'allPresets' => TimePreset::withCount('slots')->orderBy('name')->get(),
             'teachers' => $teachers,
-            'teachingLoads' => $loads['teaching'],
-            'proctorLoads' => $loads['proctor'],
-            'overallLoads' => $loads['overall'],
-            'teachingLoadsByDay' => $loads['teaching_by_day'],
-            'proctorLoadsByDay' => $loads['proctor_by_day'],
-            'overallLoadsByDay' => $loads['overall_by_day'],
             'assignments' => $assignments
                 ->whereNotNull('teacher_id')
                 ->map(fn (SectionSubjectTeacher $assignment): array => [
