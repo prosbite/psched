@@ -19,6 +19,7 @@ const props = defineProps({
     allSubjects: { type: Array, required: true },
     allPresets: { type: Array, required: true },
     teachers: { type: Array, required: true },
+    copyableGroups: { type: Array, default: () => [] },
     subjectTeacherLoads: { type: Object, default: () => ({}) },
     subjectTeacherLoadsByDay: { type: Object, default: () => ({}) },
     assignments: { type: Array, default: () => [] },
@@ -103,6 +104,56 @@ onMounted(() => {
 
 const saveSetup = () => {
     setupForm.put(route('schedule-groups.setup', props.group.id), { preserveScroll: true });
+};
+
+const copySourceId = ref('');
+const copyNotice = ref('');
+
+const copyableSources = computed(() =>
+    props.copyableGroups.filter(
+        (group) => (group.section_ids?.length ?? 0) > 0 || (group.subject_ids?.length ?? 0) > 0,
+    ),
+);
+
+const copySource = computed(
+    () => copyableSources.value.find((group) => Number(group.id) === Number(copySourceId.value)) ?? null,
+);
+
+watch(copySourceId, () => {
+    copyNotice.value = '';
+});
+
+const applyCopiedSetup = () => {
+    const source = copySource.value;
+
+    if (!source) {
+        return;
+    }
+
+    const availableSectionIds = new Set(props.allSections.map((section) => Number(section.id)));
+    const availableSubjectIds = new Set(props.allSubjects.map((subject) => Number(subject.id)));
+    const days = Math.max(1, Number(source.days) || 1);
+    const dayPresets = {};
+
+    for (let day = 1; day <= days; day++) {
+        dayPresets[day] = '';
+    }
+
+    for (const preset of source.day_presets ?? []) {
+        const day = Number(preset.day);
+
+        if (day >= 1 && day <= days) {
+            dayPresets[day] = preset.time_preset_id ?? '';
+        }
+    }
+
+    setupForm.time_preset_id = source.time_preset_id ?? '';
+    setupForm.days = days;
+    setupForm.exams_per_day = Number(source.exams_per_day) || 1;
+    setupForm.day_presets = dayPresets;
+    setupForm.sections = (source.section_ids ?? []).filter((id) => availableSectionIds.has(Number(id)));
+    setupForm.subjects = (source.subject_ids ?? []).filter((id) => availableSubjectIds.has(Number(id)));
+    copyNotice.value = `Copied the setup from "${source.title}". Review the selections, then click Save Setup.`;
 };
 
 const toggle = (list, id) => {
@@ -831,6 +882,27 @@ const saveAssignments = () => {
                     Choose the preset, the exam length, the sections, and the ordered subjects per grade.
                 </p>
 
+                <div v-if="isDraft && copyableSources.length > 0" class="mt-4 rounded-md border border-dashed border-gray-300 p-3">
+                    <InputLabel for="copy_setup_source" value="Copy setup from a previous group" />
+                    <div class="mt-1 flex flex-wrap items-center gap-2">
+                        <select
+                            id="copy_setup_source"
+                            v-model="copySourceId"
+                            class="block w-full flex-1 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                        >
+                            <option value="">Select a schedule group</option>
+                            <option v-for="source in copyableSources" :key="source.id" :value="source.id">
+                                #{{ source.id }} · {{ source.title }} ({{ source.days }} day{{ source.days === 1 ? '' : 's' }}, {{ source.exams_per_day }}/day)
+                            </option>
+                        </select>
+                        <SecondaryButton type="button" :disabled="!copySource" @click="applyCopiedSetup">Copy</SecondaryButton>
+                    </div>
+                    <p class="mt-1 text-xs text-gray-500">
+                        Copies the preset, days, exams per day, per-day presets, sections, and subject order into this form.
+                    </p>
+                    <p v-if="copyNotice" class="mt-1 text-xs font-medium text-indigo-700">{{ copyNotice }}</p>
+                </div>
+
                 <div class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
                     <div class="sm:col-span-3">
                         <InputLabel for="setup_preset" value="Default Time Preset" />
@@ -1012,6 +1084,22 @@ const saveAssignments = () => {
                             >
                                 Table
                             </button>
+                        </div>
+                        <div v-if="teacherView === 'table'" class="flex items-center gap-2">
+                            <a
+                                :href="route('schedule-groups.export.teacher-load.pdf', group.id) + '?inline=1'"
+                                target="_blank"
+                                rel="noopener"
+                                class="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold uppercase tracking-widest text-gray-700 shadow-sm transition duration-150 ease-in-out hover:bg-gray-50"
+                            >
+                                Print
+                            </a>
+                            <a
+                                :href="route('schedule-groups.export.teacher-load.pdf', group.id)"
+                                class="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold uppercase tracking-widest text-gray-700 shadow-sm transition duration-150 ease-in-out hover:bg-gray-50"
+                            >
+                                Download PDF
+                            </a>
                         </div>
                         <label class="flex shrink-0 items-center gap-2 text-sm text-gray-700">
                             <input

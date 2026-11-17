@@ -6,6 +6,7 @@ use App\Enums\ScheduleGroupStatus;
 use App\Http\Requests\ScheduleGroupRequest;
 use App\Models\Quarter;
 use App\Models\ScheduleGroup;
+use App\Models\ScheduleGroupDayPreset;
 use App\Models\SchoolYear;
 use App\Models\Section;
 use App\Models\SectionSubjectTeacher;
@@ -14,10 +15,10 @@ use App\Models\Teacher;
 use App\Models\TimePreset;
 use App\Services\ScheduleGenerator;
 use App\Services\SubjectSlotPlanner;
+use App\Services\SubjectTeacherDayLoads;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
-use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
@@ -49,6 +50,7 @@ class ScheduleGroupController extends Controller
             'timePresets' => TimePreset::withCount('slots')->orderBy('name')->get(),
             'schoolYears' => SchoolYear::orderByDesc('name')->get(),
             'quarters' => Quarter::orderBy('start_date')->get(),
+            'copyableGroups' => $this->copyableGroups(),
         ]);
     }
 
@@ -58,15 +60,30 @@ class ScheduleGroupController extends Controller
     public function store(ScheduleGroupRequest $request): RedirectResponse
     {
         $data = $request->validated();
+        $copyFrom = $data['copy_setup_from'] ?? null;
         $dayPresets = $data['day_presets'] ?? [];
-        unset($data['day_presets']);
+        unset($data['day_presets'], $data['copy_setup_from']);
 
-        $group = ScheduleGroup::create([
-            ...$data,
-            'status' => ScheduleGroupStatus::Draft,
-        ]);
+        $group = DB::transaction(function () use ($data, $dayPresets, $copyFrom): ScheduleGroup {
+            $group = ScheduleGroup::create([
+                ...$data,
+                'status' => ScheduleGroupStatus::Draft,
+            ]);
 
-        $this->syncDayPresets($group, $dayPresets, (int) $group->days);
+            $this->syncDayPresets($group, $dayPresets, (int) $group->days);
+
+            if ($copyFrom !== null) {
+                $source = ScheduleGroup::with(['sections', 'subjects'])->findOrFail($copyFrom);
+
+                $group->sections()->sync($source->sections->pluck('id')->all());
+
+                $group->subjects()->sync($source->subjects->mapWithKeys(fn (Subject $subject): array => [
+                    $subject->id => ['sort_order' => (int) $subject->pivot->sort_order],
+                ])->all());
+            }
+
+            return $group;
+        });
 
         return redirect()
             ->route('schedule-groups.show', $group)
@@ -117,6 +134,7 @@ class ScheduleGroupController extends Controller
             'allSubjects' => Subject::with('gradeLevel')->orderBy('subject_name')->get(),
             'allPresets' => TimePreset::withCount('slots')->orderBy('name')->get(),
             'teachers' => $teachers,
+            'copyableGroups' => $this->copyableGroups($scheduleGroup),
             'assignments' => $assignments
                 ->whereNotNull('teacher_id')
                 ->map(fn (SectionSubjectTeacher $assignment): array => [
@@ -137,7 +155,7 @@ class ScheduleGroupController extends Controller
                 ->groupBy('teacher_id')
                 ->map(fn ($rows): int => $rows->pluck('subject_id')->unique()->count())
                 ->all(),
-            'subjectTeacherLoadsByDay' => $this->subjectTeacherLoadsByDay($subjectPlan, $scheduleGroup, $assignments),
+            'subjectTeacherLoadsByDay' => app(SubjectTeacherDayLoads::class)->compute($subjectPlan, $scheduleGroup, $assignments),
         ]);
     }
 
@@ -163,7 +181,7 @@ class ScheduleGroupController extends Controller
     {
         $data = $request->validated();
         $dayPresets = $data['day_presets'] ?? [];
-        unset($data['day_presets']);
+        unset($data['day_presets'], $data['copy_setup_from']);
 
         $scheduleGroup->update($data);
         $this->syncDayPresets($scheduleGroup, $dayPresets, (int) $scheduleGroup->days);
@@ -326,61 +344,45 @@ class ScheduleGroupController extends Controller
     }
 
     /**
-     * Count the distinct subjects each teacher handles on each day.
+     * List the saved setups of the other groups so this one can copy them.
      *
-     * Mirrors the generator's per-day proctoring exemption: two or more
-     * distinct subjects on a day exempt a teacher for that day only.
-     *
-     * @param  array<int, array<int, array<int, array{subject_id: int, period: int|null}>>>  $subjectPlan
-     * @param  Collection<int, SectionSubjectTeacher>  $assignments
-     * @return array<int, array<int, int>>
+     * @return array<int, array<string, mixed>>
      */
-    private function subjectTeacherLoadsByDay(array $subjectPlan, ScheduleGroup $scheduleGroup, Collection $assignments): array
+    private function copyableGroups(?ScheduleGroup $exclude = null): array
     {
-        $sectionsByGrade = $scheduleGroup->sections->groupBy(fn (Section $section): int => (int) $section->grade_level_id);
-        $teacherByPair = $assignments
-            ->whereNotNull('teacher_id')
-            ->mapWithKeys(fn (SectionSubjectTeacher $assignment): array => [
-                ((int) $assignment->section_id).'-'.((int) $assignment->subject_id) => (int) $assignment->teacher_id,
-            ]);
-
-        $subjectsByTeacherByDay = [];
-
-        foreach ($subjectPlan as $day => $grades) {
-            foreach ($grades as $gradeId => $entries) {
-                $gradeSections = $sectionsByGrade->get((int) $gradeId, collect());
-
-                foreach ($entries as $entry) {
-                    if ($entry['period'] === null) {
-                        continue;
-                    }
-
-                    $subjectId = (int) $entry['subject_id'];
-
-                    foreach ($gradeSections as $section) {
-                        $teacherId = $teacherByPair->get(((int) $section->id).'-'.$subjectId);
-
-                        if ($teacherId === null) {
-                            continue;
-                        }
-
-                        $subjectsByTeacherByDay[(int) $teacherId][(int) $day][$subjectId] = true;
-                    }
-                }
-            }
-        }
-
-        $loads = [];
-
-        foreach ($subjectsByTeacherByDay as $teacherId => $days) {
-            foreach ($days as $day => $subjectIds) {
-                $loads[$teacherId][$day] = count($subjectIds);
-            }
-
-            ksort($loads[$teacherId]);
-        }
-
-        return $loads;
+        return ScheduleGroup::query()
+            ->when($exclude !== null, fn ($query) => $query->where('id', '!=', $exclude->id))
+            ->with(['dayPresets', 'sections', 'subjects'])
+            ->orderByDesc('id')
+            ->get()
+            ->map(fn (ScheduleGroup $group): array => [
+                'id' => (int) $group->id,
+                'title' => $group->title,
+                'days' => (int) $group->days,
+                'exams_per_day' => (int) $group->exams_per_day,
+                'max_proctors_per_teacher' => (int) $group->max_proctors_per_teacher,
+                'time_preset_id' => $group->time_preset_id === null ? null : (int) $group->time_preset_id,
+                'day_presets' => $group->dayPresets
+                    ->map(fn (ScheduleGroupDayPreset $preset): array => [
+                        'day' => (int) $preset->day,
+                        'time_preset_id' => (int) $preset->time_preset_id,
+                    ])
+                    ->values()
+                    ->all(),
+                'section_ids' => $group->sections
+                    ->pluck('id')
+                    ->map(fn ($id): int => (int) $id)
+                    ->values()
+                    ->all(),
+                'subject_ids' => $group->subjects
+                    ->sortBy(fn (Subject $subject): int => ((int) ($subject->pivot->sort_order ?? 0)) * 1000000 + (int) $subject->id)
+                    ->pluck('id')
+                    ->map(fn ($id): int => (int) $id)
+                    ->values()
+                    ->all(),
+            ])
+            ->values()
+            ->all();
     }
 
     /**

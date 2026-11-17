@@ -111,3 +111,51 @@ test('guests cannot download admin schedule exports', function () {
     $this->get(route('schedule-groups.export.pdf', $group))->assertRedirect(route('login'));
     $this->get(route('schedule-groups.export.excel', $group))->assertRedirect(route('login'));
 });
+
+test('admins can download the teacher load table as pdf', function () {
+    $admin = User::factory()->create(['role' => UserRole::Admin]);
+    $group = scheduleExportContext();
+
+    $response = $this->actingAs($admin)->get(route('schedule-groups.export.teacher-load.pdf', $group));
+
+    $response->assertOk();
+
+    expect($response->headers->get('content-type'))->toContain('application/pdf');
+    expect($response->headers->get('content-disposition'))->toContain('midterm-schedule-teacher-load.pdf');
+    expect($response->getContent())->toStartWith('%PDF');
+});
+
+test('the teacher load pdf can be streamed inline for printing', function () {
+    $admin = User::factory()->create(['role' => UserRole::Admin]);
+    $group = scheduleExportContext();
+
+    $response = $this->actingAs($admin)->get(route('schedule-groups.export.teacher-load.pdf', [
+        'scheduleGroup' => $group,
+        'inline' => 1,
+    ]));
+
+    $response->assertOk();
+
+    expect($response->headers->get('content-type'))->toContain('application/pdf');
+    expect($response->headers->get('content-disposition'))->toContain('inline');
+    expect($response->getContent())->toStartWith('%PDF');
+});
+
+test('the teacher load pdf renders an empty state without schedules', function () {
+    $admin = User::factory()->create(['role' => UserRole::Admin]);
+    $group = scheduleExportContext();
+    $group->schedules()->delete();
+
+    $response = $this->actingAs($admin)->get(route('schedule-groups.export.teacher-load.pdf', $group));
+
+    $response->assertOk();
+
+    expect($response->headers->get('content-type'))->toContain('application/pdf');
+    expect($response->getContent())->toStartWith('%PDF');
+});
+
+test('guests cannot download the teacher load pdf', function () {
+    $group = scheduleExportContext();
+
+    $this->get(route('schedule-groups.export.teacher-load.pdf', $group))->assertRedirect(route('login'));
+});

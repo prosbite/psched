@@ -6,6 +6,7 @@ use App\Enums\ScheduleGroupStatus;
 use App\Models\ScheduleGroup;
 use App\Services\ScheduleGrid;
 use App\Services\ScheduleSpreadsheet;
+use App\Services\TeacherLoadReport;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Str;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
@@ -44,6 +45,18 @@ class ScheduleExportController extends Controller
         }, $this->filename($scheduleGroup, 'xlsx'), [
             'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         ]);
+    }
+
+    /**
+     * Download the group's teacher load table as a PDF.
+     */
+    public function teacherLoadPdf(ScheduleGroup $scheduleGroup, TeacherLoadReport $report): Response
+    {
+        $pdf = Pdf::loadView('exports.teacher-load-pdf', ['report' => $report->forGroup($scheduleGroup)])
+            ->setPaper('a4', 'portrait');
+        $filename = Str::slug($scheduleGroup->title).'-teacher-load.pdf';
+
+        return request()->boolean('inline') ? $pdf->stream($filename) : $pdf->download($filename);
     }
 
     /**

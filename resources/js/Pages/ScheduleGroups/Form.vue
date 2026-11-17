@@ -1,4 +1,5 @@
 <script setup>
+import { computed, ref, watch } from 'vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
 import AdminLayout from '@/Layouts/AdminLayout.vue';
 import FlashBanner from '@/Components/FlashBanner.vue';
@@ -13,6 +14,7 @@ const props = defineProps({
     timePresets: { type: Array, required: true },
     schoolYears: { type: Array, required: true },
     quarters: { type: Array, required: true },
+    copyableGroups: { type: Array, default: () => [] },
 });
 
 const dayPresetValues = () => {
@@ -35,7 +37,61 @@ const form = useForm({
     quarter_id: props.group?.quarter_id ?? '',
     max_proctors_per_teacher: props.group?.max_proctors_per_teacher ?? 2,
     day_presets: dayPresetValues(),
+    copy_setup_from: null,
 });
+
+const copySourceId = ref('');
+const copyNotice = ref('');
+
+const copyableSources = computed(() =>
+    props.copyableGroups.filter(
+        (group) => (group.section_ids?.length ?? 0) > 0 || (group.subject_ids?.length ?? 0) > 0,
+    ),
+);
+
+const copySource = computed(
+    () => copyableSources.value.find((group) => Number(group.id) === Number(copySourceId.value)) ?? null,
+);
+
+watch(copySourceId, () => {
+    copyNotice.value = '';
+    form.copy_setup_from = null;
+});
+
+const applyCopiedSetup = () => {
+    const source = copySource.value;
+
+    if (!source) {
+        return;
+    }
+
+    const days = Math.max(1, Number(source.days) || 1);
+    const dayPresets = {};
+
+    for (let day = 1; day <= days; day++) {
+        dayPresets[day] = '';
+    }
+
+    for (const preset of source.day_presets ?? []) {
+        const day = Number(preset.day);
+
+        if (day >= 1 && day <= days) {
+            dayPresets[day] = preset.time_preset_id ?? '';
+        }
+    }
+
+    form.time_preset_id = source.time_preset_id ?? '';
+    form.days = days;
+    form.exams_per_day = Number(source.exams_per_day) || 1;
+    form.max_proctors_per_teacher = Number(source.max_proctors_per_teacher) || 0;
+    form.day_presets = dayPresets;
+    form.copy_setup_from = source.id;
+
+    const sectionCount = source.section_ids?.length ?? 0;
+    const subjectCount = source.subject_ids?.length ?? 0;
+
+    copyNotice.value = `Copied the setup from "${source.title}". Its ${sectionCount} section(s) and ${subjectCount} subject(s) are applied when you save.`;
+};
 
 const submit = () => {
     if (props.group) {
@@ -53,6 +109,29 @@ const submit = () => {
         <FlashBanner />
 
         <form class="max-w-2xl rounded-lg bg-white p-6 shadow" @submit.prevent="submit">
+            <div v-if="!group && copyableSources.length > 0" class="mb-6 rounded-md border border-dashed border-gray-300 p-3">
+                <InputLabel for="copy_setup_source" value="Copy setup from a previous group" />
+                <div class="mt-1 flex flex-wrap items-center gap-2">
+                    <select
+                        id="copy_setup_source"
+                        v-model="copySourceId"
+                        class="block w-full flex-1 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                    >
+                        <option value="">Select a schedule group</option>
+                        <option v-for="source in copyableSources" :key="source.id" :value="source.id">
+                            #{{ source.id }} · {{ source.title }} ({{ source.days }} day{{ source.days === 1 ? '' : 's' }}, {{ source.exams_per_day }}/day)
+                        </option>
+                    </select>
+                    <SecondaryButton type="button" :disabled="!copySource" @click="applyCopiedSetup">Use setup</SecondaryButton>
+                </div>
+                <p class="mt-1 text-xs text-gray-500">
+                    Prefills the preset, days, exams per day, per-day presets, and proctorship limit. Its sections and
+                    subject order are copied when you save.
+                </p>
+                <p v-if="copyNotice" class="mt-1 text-xs font-medium text-indigo-700">{{ copyNotice }}</p>
+                <InputError class="mt-2" :message="form.errors.copy_setup_from" />
+            </div>
+
             <div>
                 <InputLabel for="title" value="Title" />
                 <TextInput id="title" v-model="form.title" type="text" class="mt-1 block w-full" required />

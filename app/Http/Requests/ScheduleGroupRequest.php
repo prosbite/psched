@@ -33,6 +33,7 @@ class ScheduleGroupRequest extends FormRequest
             'max_proctors_per_teacher' => ['required', 'integer', 'min:0', 'max:20'],
             'day_presets' => ['array'],
             'day_presets.*' => ['nullable', 'integer', Rule::exists('time_presets', 'id')],
+            'copy_setup_from' => ['nullable', 'integer', Rule::exists('schedule_groups', 'id')],
         ];
     }
 }

@@ -63,6 +63,8 @@ Route::middleware(['auth', 'admin'])->group(function () {
         ->name('schedule-groups.export.pdf');
     Route::get('schedule-groups/{scheduleGroup}/export/excel', [ScheduleExportController::class, 'excel'])
         ->name('schedule-groups.export.excel');
+    Route::get('schedule-groups/{scheduleGroup}/export/teacher-load/pdf', [ScheduleExportController::class, 'teacherLoadPdf'])
+        ->name('schedule-groups.export.teacher-load.pdf');
 
     Route::put('schedule-groups/{scheduleGroup}/setup', [ScheduleGroupController::class, 'setup'])
         ->name('schedule-groups.setup');
